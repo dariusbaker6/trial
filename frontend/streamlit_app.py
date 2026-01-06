@@ -30,7 +30,7 @@ except Exception:
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEMO_DURATION_HOURS = 6
+DEMO_DURATION_HOURS = 1
 REDIRECT_URL = "https://sold-1.onrender.com"
 # Persistent file to store first launch timestamp (survives restarts)
 _LAUNCH_TS_FILE = Path("/tmp/.trenchfeed_demo_launch_ts")
