@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python3
 # Streamlit app: TrenchFeed - robust Top Coins link generation (Dexscreener, Solscan, Birdeye)
 # Key fixes:
@@ -6,7 +8,6 @@
 # 3) dexscreener prefers pair_address if present, else falls back to token_address
 # 4) LinkColumn config applied only if available
 # 5) sanity caption shows row counts and valid token/pair counts
-# 6) PAYWALL: Requires valid API key from api_customers table
 
 import os
 from typing import Dict, List, Optional, Iterable, Set, Tuple
@@ -22,6 +23,140 @@ try:
     from streamlit_autorefresh import st_autorefresh  # type: ignore
 except Exception:
     st_autorefresh = None  # fallback: no automatic refresh
+
+# ============================= Demo Expiration =============================
+# This demo instance expires 72 hours after FIRST LAUNCH by the client.
+# Countdown is shown on all pages. After expiration, redirect to sold instance.
+from datetime import datetime, timezone
+from pathlib import Path
+
+DEMO_DURATION_HOURS = 6
+REDIRECT_URL = "https://sold-1.onrender.com"
+# Persistent file to store first launch timestamp (survives restarts)
+_LAUNCH_TS_FILE = Path("/tmp/.trenchfeed_demo_launch_ts")
+
+def _get_demo_start_time() -> datetime:
+    """Get or initialize the demo start time (persists across reruns)."""
+    # Check persistent file first
+    if _LAUNCH_TS_FILE.exists():
+        try:
+            ts_str = _LAUNCH_TS_FILE.read_text().strip()
+            return datetime.fromisoformat(ts_str)
+        except Exception:
+            pass
+    # First launch — record current time
+    now = datetime.now(timezone.utc)
+    try:
+        _LAUNCH_TS_FILE.write_text(now.isoformat())
+    except Exception:
+        pass
+    return now
+
+def _get_time_remaining() -> tuple:
+    """Returns (expired: bool, hours: int, minutes: int, seconds: int, total_seconds: float)."""
+    start = _get_demo_start_time()
+    now = datetime.now(timezone.utc)
+    elapsed = (now - start).total_seconds()
+    remaining = (DEMO_DURATION_HOURS * 3600) - elapsed
+    
+    if remaining <= 0:
+        return (True, 0, 0, 0, 0)
+    
+    hours = int(remaining // 3600)
+    minutes = int((remaining % 3600) // 60)
+    seconds = int(remaining % 60)
+    return (False, hours, minutes, seconds, remaining)
+
+def check_demo_expiration():
+    """Check if demo period has expired and redirect if so."""
+    expired, _, _, _, _ = _get_time_remaining()
+    
+    if expired:
+        st.set_page_config(page_title="Demo Expired", page_icon="🔒", layout="centered")
+        st.markdown(
+            f"""
+            <meta http-equiv="refresh" content="0; url={REDIRECT_URL}">
+            <style>
+                [data-testid="stAppViewContainer"] {{
+                    background: linear-gradient(135deg, #0F2027 0%, #203A43 50%, #2C5364 100%);
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    min-height: 100vh;
+                }}
+                .redirect-box {{
+                    text-align: center;
+                    padding: 3rem;
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 16px;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                }}
+                .redirect-box h1 {{
+                    color: #FFB900;
+                    margin-bottom: 1rem;
+                }}
+                .redirect-box p {{
+                    color: #E0E0E0;
+                    font-size: 1.1rem;
+                }}
+                .redirect-box a {{
+                    color: #71C7EC;
+                    font-weight: bold;
+                }}
+            </style>
+            <div class="redirect-box">
+                <h1>🔒 Demo Period Ended</h1>
+                <p>This demo instance has expired.</p>
+                <p>Redirecting to <a href="{REDIRECT_URL}">{REDIRECT_URL}</a>...</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        st.stop()
+
+def render_countdown_banner():
+    """Render the countdown banner at the top of the page."""
+    expired, hours, minutes, seconds, _ = _get_time_remaining()
+    if expired:
+        return
+    
+    # Color shifts from green -> yellow -> red as time runs out
+    if hours >= 3:
+        color = "#4CAF50"  # green
+    elif hours >= 1:
+        color = "#FFB900"  # yellow/orange
+    else:
+        color = "#FF4444"  # red
+    
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(90deg, rgba(0,0,0,0.3), rgba(0,0,0,0.1));
+            border: 1px solid {color};
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        ">
+            <span style="color: #E0E0E0; font-size: 0.9rem;">
+                ⏱️ <strong>Demo Access</strong> — Expires in:
+            </span>
+            <span style="
+                color: {color};
+                font-family: monospace;
+                font-size: 1.1rem;
+                font-weight: bold;
+            ">
+                {hours:02d}:{minutes:02d}:{seconds:02d}
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+check_demo_expiration()
 
 # ============================= Config =============================
 st.set_page_config(page_title="TrenchFeed - Early Leaders", page_icon="🚀", layout="wide")
@@ -88,82 +223,11 @@ a {
 .ag-theme-streamlit .ag-row-hover {
     background-color: rgba(255,255,255,0.05) !important;
 }
-
-/* Paywall styling */
-.paywall-container {
-    max-width: 500px;
-    margin: 100px auto;
-    padding: 40px;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    text-align: center;
-}
-.paywall-title {
-    font-size: 2rem;
-    margin-bottom: 1rem;
-    background: linear-gradient(90deg, #00C9FF, #92FE9D);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-.paywall-subtitle {
-    color: #A0A0A0;
-    margin-bottom: 2rem;
-}
-.subscribe-btn {
-    display: inline-block;
-    padding: 12px 32px;
-    background: linear-gradient(90deg, #00C9FF, #92FE9D);
-    color: #0F2027 !important;
-    text-decoration: none;
-    border-radius: 8px;
-    font-weight: bold;
-    margin-top: 1rem;
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-.subscribe-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0, 201, 255, 0.3);
-}
-
-/* Stream status indicator styling */
-.stream-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-}
-.stream-status.live {
-    background: linear-gradient(135deg, rgba(0, 201, 255, 0.15) 0%, rgba(146, 254, 157, 0.15) 100%);
-    border: 1px solid rgba(0, 201, 255, 0.4);
-    color: #92FE9D;
-}
-.stream-status.paused {
-    background: rgba(255, 185, 0, 0.12);
-    border: 1px solid rgba(255, 185, 0, 0.4);
-    color: #FFB900;
-}
-.stream-status .pulse {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #92FE9D;
-    animation: pulse-glow 1.5s ease-in-out infinite;
-}
-.stream-status.paused .pulse {
-    background: #FFB900;
-    animation: none;
-}
-@keyframes pulse-glow {
-    0%, 100% { opacity: 1; box-shadow: 0 0 4px rgba(146, 254, 157, 0.6); }
-    50% { opacity: 0.5; box-shadow: 0 0 12px rgba(146, 254, 157, 0.9); }
-}
 """
 st.markdown(f"<style>{custom_css}</style>", unsafe_allow_html=True)
+
+# Render countdown banner at top of every page
+render_countdown_banner()
 
 def cfg(key: str, default: str = "") -> str:
     v = os.environ.get(key, default)
@@ -189,142 +253,6 @@ SESSION.headers.update({
     "Accept-Profile": SB_SCHEMA,
     "Content-Profile": SB_SCHEMA,
 })
-
-# ============================= PAYWALL AUTHENTICATION =============================
-STRIPE_PURCHASE_URL = "https://buy.stripe.com/dRm7sLdUF0DR2m7ga07IY08"
-
-def validate_api_key(api_key: str) -> Tuple[bool, str, Optional[Dict]]:
-    """
-    Validate an API key against the api_customers table.
-    
-    Returns:
-        Tuple of (is_valid, message, customer_data)
-    """
-    if not api_key or not api_key.strip():
-        return False, "Please enter your API key.", None
-    
-    api_key = api_key.strip()
-    
-    try:
-        url = f"{SB_URL}/rest/v1/api_customers"
-        params = {
-            "select": "id,email,api_key,tier,status,expires_at",
-            "api_key": f"eq.{api_key}",
-            "limit": "1"
-        }
-        
-        response = SESSION.get(url, params=params, timeout=10)
-        
-        if response.status_code not in (200, 206):
-            return False, f"Error validating API key. Please try again.", None
-        
-        data = response.json()
-        
-        if not data or len(data) == 0:
-            return False, "Invalid API key. Please check your key or subscribe to get access.", None
-        
-        customer = data[0]
-        
-        # Check status
-        if customer.get("status") != "active":
-            status = customer.get("status", "unknown")
-            return False, f"Your subscription is {status}. Please renew to continue.", None
-        
-        # Check expiration for trial tier
-        if customer.get("tier") == "trial" and customer.get("expires_at"):
-            expires_at = pd.to_datetime(customer["expires_at"], utc=True)
-            now = pd.Timestamp.now(tz="UTC")
-            if expires_at < now:
-                return False, "Your trial has expired. Please subscribe to continue.", None
-        
-        return True, f"Welcome! Tier: {customer.get('tier', 'unknown').upper()}", customer
-        
-    except requests.exceptions.Timeout:
-        return False, "Connection timeout. Please try again.", None
-    except requests.exceptions.RequestException as e:
-        return False, f"Network error. Please check your connection.", None
-    except Exception as e:
-        return False, f"Validation error. Please try again.", None
-
-def show_paywall():
-    """Display the paywall page with API key input and purchase link."""
-    st.markdown("""
-        <div class="paywall-container">
-            <div class="paywall-title">🔒 TrenchFeed Dashboard</div>
-            <div class="paywall-subtitle">Enter your API key to access the live dashboard</div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # Center the input form
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        st.markdown("### 🔑 Enter API Key")
-        
-        # API Key input
-        api_key_input = st.text_input(
-            "API Key",
-            type="password",
-            placeholder="tk_live_xxxxxxxxxxxxx",
-            help="Enter your TrenchFeed API key"
-        )
-        
-        # Login button
-        if st.button("🚀 Access Dashboard", type="primary", use_container_width=True):
-            if api_key_input:
-                is_valid, message, customer = validate_api_key(api_key_input)
-                if is_valid:
-                    st.session_state["authenticated"] = True
-                    st.session_state["api_key"] = api_key_input
-                    st.session_state["customer"] = customer
-                    st.success(message)
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error(message)
-            else:
-                st.warning("Please enter your API key.")
-        
-        st.markdown("---")
-        
-        # Subscribe section
-        st.markdown("### 💳 Don't have an API key?")
-        st.markdown("""
-            Get instant access to:
-            - 📊 Real-time market data streaming
-            - 🚀 Launch Radar for new tokens
-            - 🏆 Early Leader identification
-            - 🔎 Deep token analytics
-        """)
-        
-        st.markdown(f"""
-            <a href="{STRIPE_PURCHASE_URL}" target="_blank" class="subscribe-btn">
-                Subscribe Now →
-            </a>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.caption("After subscribing, you'll receive your API key via email.")
-
-def check_authentication() -> bool:
-    """Check if user is authenticated. Returns True if authenticated."""
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-    
-    return st.session_state.get("authenticated", False)
-
-def logout():
-    """Clear authentication state."""
-    st.session_state["authenticated"] = False
-    st.session_state["api_key"] = None
-    st.session_state["customer"] = None
-
-# ============================= CHECK AUTHENTICATION =============================
-if not check_authentication():
-    show_paywall()
-    st.stop()
-
-# ============================= AUTHENTICATED USER CONTENT BELOW =============================
 
 # ============================= Helpers =============================
 def now_utc() -> pd.Timestamp:
@@ -969,26 +897,6 @@ def score_and_classify(
 st.title("TrenchFeed")
 st.caption("Robust Top Coins link generation (Dexscreener, Solscan, Birdeye)")
 
-# Show authenticated user info and logout button in sidebar header
-with st.sidebar:
-    customer = st.session_state.get("customer", {})
-    if customer:
-        tier = customer.get("tier", "unknown").upper()
-        email = customer.get("email", "")
-        st.markdown(f"""
-            <div style='background: rgba(0, 201, 255, 0.1); padding: 10px; border-radius: 8px; margin-bottom: 1rem;'>
-                <strong>🔓 Logged In</strong><br>
-                <small>Tier: {tier}</small><br>
-                <small style='color: #888;'>{email[:20]}...</small> 
-            </div>
-        """, unsafe_allow_html=True)
-    
-    if st.button("🚪 Logout", use_container_width=True):
-        logout()
-        st.rerun()
-    
-    st.markdown("---")
-
 with st.sidebar:
     # Encapsulate all controls in an expander for a cleaner, more organized look
     with st.expander("🛠️ Controls & Settings", expanded=True):
@@ -1236,7 +1144,7 @@ with tab_detail:
         st.write("Wallets")
         st.dataframe(w.reset_index(drop=True), use_container_width=True, height=200)
 
-# ============================= Top Coins (LIVE) =============================
+# ============================= Top Coins =============================
 with tab_top:
     # Transform the Top Coins tab into a live streaming dashboard.  The live feed
     # connects to the enterprise streaming endpoint and renders incoming events
@@ -1255,58 +1163,14 @@ with tab_top:
         "trenchfeed.cc</a> and grab a subscription.</div>",
         unsafe_allow_html=True,
     )
-    
-    # Initialize stream control state
-    if "stream_paused" not in st.session_state:
-        st.session_state.stream_paused = False
-    if "stream_data" not in st.session_state:
-        st.session_state.stream_data = []
-    if "stream_initialized" not in st.session_state:
-        st.session_state.stream_initialized = False
-    
-    # Create button row with Refresh and Pause/Resume side by side
-    btn_col1, btn_col2, status_col = st.columns([1, 1, 2])
-    
-    with btn_col1:
-        refresh_feed = st.button("🔄 Refresh Feed", key="refresh_feed", use_container_width=True)
-    
-    with btn_col2:
-        # Toggle pause/resume state
-        is_paused = st.session_state.stream_paused
-        pause_label = "▶️ Resume" if is_paused else "⏸️ Pause"
-        if st.button(pause_label, key="pause_resume", use_container_width=True):
-            st.session_state.stream_paused = not st.session_state.stream_paused
-            st.rerun()
-    
-    with status_col:
-        # Display current stream status with visual indicator
-        if st.session_state.stream_paused:
-            st.markdown(
-                '<div class="stream-status paused">'
-                '<span class="pulse"></span>'
-                'PAUSED'
-                '</div>',
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                '<div class="stream-status live">'
-                '<span class="pulse"></span>'
-                'STREAMING'
-                '</div>',
-                unsafe_allow_html=True
-            )
-    
-    # Handle refresh - reset data and re-initialize
-    if refresh_feed:
+    # Button to refresh the streaming feed
+    refresh_feed = st.button("🔄 Refresh Feed", key="refresh_feed")
+    # Initialize session state storage for streaming events
+    if "stream_data" not in st.session_state or refresh_feed:
         st.session_state.stream_data = []
         st.session_state.stream_initialized = False
-        st.session_state.stream_paused = False
-        st.rerun()
-    
     # Placeholder for the live table
     live_placeholder = st.empty()
-    
     # Define a mapping from raw column names to degen‑friendly jargon.  These
     # names resonate with crypto traders while remaining self‑explanatory.
     _live_rename_map = {
@@ -1323,73 +1187,45 @@ with tab_top:
         "payload.current_swap.trader_wallet": "Trader Wallet",
         "payload.timestamp": "Event Timestamp",
     }
-    
-    def render_stream_table():
-        """Render the current stream data as a table."""
-        if not st.session_state.stream_data:
-            live_placeholder.info("No data yet. Waiting for stream events...")
-            return
-        
-        try:
-            df_stream = pd.json_normalize(st.session_state.stream_data)
-        except Exception:
-            df_stream = pd.DataFrame(st.session_state.stream_data)
-        
-        # Drop the recent_swaps column if present, as it contains opaque objects
-        if "payload.recent_swaps" in df_stream.columns:
-            df_stream = df_stream.drop(columns=["payload.recent_swaps"])
-        
-        # Rename columns using the friendly mapping where available
-        rename_map = {k: v for k, v in _live_rename_map.items() if k in df_stream.columns}
-        df_stream = df_stream.rename(columns=rename_map)
-        
-        # Determine primary columns (after rename, if rename occurred)
-        primary_raw = ["payload.token.name", "payload.token.symbol", "payload.pair.base_token"]
-        primary_cols = [rename_map.get(col, _live_rename_map.get(col, col)) for col in primary_raw if (rename_map.get(col, _live_rename_map.get(col, col)) in df_stream.columns)]
-        
-        # Build an ordered list of columns: primary first, then the rest
-        other_cols = [c for c in df_stream.columns if c not in primary_cols]
-        ordered_cols = primary_cols + other_cols
-        
-        # Take the last 50 events and reverse order so newest events appear first
-        df_show = df_stream[ordered_cols].tail(50).iloc[::-1].copy()
-        
-        # Assign descending row numbers (highest at top) as the index
-        n_rows = len(df_show)
-        df_show.index = range(n_rows, 0, -1)
-        
-        # Display the table
-        live_placeholder.dataframe(
-            df_show,
-            use_container_width=True,
-            height=620,
-        )
-    
     def run_live_stream():
         """Internal helper to consume streaming data and update the table."""
         # Collect a bounded number of events to avoid infinite loops
         for event in stream_enterprise(max_events=200):
-            # Check if stream is paused - if so, stop consuming new events
-            # Note: Due to Streamlit's execution model, this check happens
-            # between events. The pause takes effect after the current event.
-            if st.session_state.stream_paused:
-                break
-            
             # Append the raw event to our session state
             st.session_state.stream_data.append(event)
-            
-            # Render the updated table
-            render_stream_table()
-    
-    # If paused, just render the existing data
-    if st.session_state.stream_paused:
-        render_stream_table()
+            # Build a DataFrame from the accumulated events.  json_normalize flattens
+            # nested objects and automatically creates columns for each key.
+            try:
+                df_stream = pd.json_normalize(st.session_state.stream_data)
+            except Exception:
+                # Fall back to a simple DataFrame if normalization fails
+                df_stream = pd.DataFrame(st.session_state.stream_data)
+            # Drop the recent_swaps column if present, as it contains opaque objects
+            if "payload.recent_swaps" in df_stream.columns:
+                df_stream = df_stream.drop(columns=["payload.recent_swaps"])
+            # Rename columns using the friendly mapping where available
+            rename_map = {k: v for k, v in _live_rename_map.items() if k in df_stream.columns}
+            df_stream = df_stream.rename(columns=rename_map)
+            # Determine primary columns (after rename, if rename occurred)
+            primary_raw = ["payload.token.name", "payload.token.symbol", "payload.pair.base_token"]
+            primary_cols = [rename_map.get(col, _live_rename_map.get(col, col)) for col in primary_raw if (rename_map.get(col, _live_rename_map.get(col, col)) in df_stream.columns)]
+            # Build an ordered list of columns: primary first, then the rest
+            other_cols = [c for c in df_stream.columns if c not in primary_cols]
+            ordered_cols = primary_cols + other_cols
+            # Take the last 50 events and reverse order so newest events appear first
+            df_show = df_stream[ordered_cols].tail(50).iloc[::-1].copy()
+            # Assign descending row numbers (highest at top) as the index
+            n_rows = len(df_show)
+            df_show.index = range(n_rows, 0, -1)
+            # Display the table
+            live_placeholder.dataframe(
+                df_show,
+                use_container_width=True,
+                height=620,
+            )
     # Start the stream when the component first renders or upon refresh
-    elif not st.session_state.get("stream_initialized"):
+    if not st.session_state.get("stream_initialized"):
         st.session_state.stream_initialized = True
-        run_live_stream()
-    else:
-        # Already initialized and not paused - continue streaming
         run_live_stream()
 
 # ============================= Launch Radar =============================
