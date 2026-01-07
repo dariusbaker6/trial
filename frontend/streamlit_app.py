@@ -39,10 +39,7 @@ except Exception:
 # Redirect URL when preview expires
 EXPIRED_REDIRECT_URL = "https://sold-1.onrender.com"
 
-# Inject custom CSS for a modern, beautiful dashboard.  This styling enhances the
-# overall look and feel without altering the underlying functionality.  The
-# gradient background, dark sidebar, styled headings, and improved table colors
-# provide a cohesive visual experience.
+# Inject custom CSS for a modern, beautiful dashboard.
 custom_css = """
 /* Remove default Streamlit main menu and footer */
 #MainMenu {visibility: hidden;}
@@ -271,38 +268,20 @@ SESSION.headers.update({
 STRIPE_PURCHASE_URL = "https://buy.stripe.com/dRm7sLdUF0DR2m7ga07IY08"
 
 def get_or_create_anon_id() -> str:
-    """
-    Get or create a stable anonymous ID for the current visitor.
-    Uses st.session_state as the primary storage mechanism.
-    The ID is a UUID that persists across page refreshes within the same browser session.
-    """
-    # Check if we already have an anon_id in session state
     if "preview_anon_id" in st.session_state and st.session_state.preview_anon_id:
         return st.session_state.preview_anon_id
-    
-    # Try to get from query params (for cookie-like persistence via URL)
     query_params = st.query_params
     if "aid" in query_params:
         anon_id = query_params["aid"]
         st.session_state.preview_anon_id = anon_id
         return anon_id
-    
-    # Generate a new anonymous ID
     anon_id = f"anon_{uuid.uuid4().hex[:16]}"
     st.session_state.preview_anon_id = anon_id
-    
-    # Store in query params for persistence across page loads
-    # This acts as a pseudo-cookie mechanism
     st.query_params["aid"] = anon_id
-    
     return anon_id
 
 
 def get_preview_session(anon_id: str) -> Optional[Dict]:
-    """
-    Fetch the preview session from Supabase for the given anonymous ID.
-    Returns None if no session exists.
-    """
     try:
         url = f"{SB_URL}/rest/v1/trial_sessions"
         params = {
@@ -311,22 +290,16 @@ def get_preview_session(anon_id: str) -> Optional[Dict]:
             "limit": "1"
         }
         response = SESSION.get(url, params=params, timeout=10)
-        
         if response.status_code in (200, 206):
             data = response.json()
             if data and len(data) > 0:
                 return data[0]
         return None
-    except Exception as e:
-        # Log error but don't block the user
+    except Exception:
         return None
 
 
 def create_preview_session(anon_id: str) -> Optional[Dict]:
-    """
-    Create a new preview session in Supabase for the given anonymous ID.
-    Sets started_at to the current time (immutable after creation).
-    """
     try:
         url = f"{SB_URL}/rest/v1/trial_sessions"
         now = datetime.now(timezone.utc).isoformat()
@@ -337,19 +310,14 @@ def create_preview_session(anon_id: str) -> Optional[Dict]:
         }
         headers = SESSION.headers.copy()
         headers["Prefer"] = "return=representation"
-        
         response = SESSION.post(url, json=payload, headers=headers, timeout=10)
-        
         if response.status_code in (200, 201):
             data = response.json()
             if data and len(data) > 0:
                 return data[0]
-            # Return the payload if no data returned
             return payload
         return None
-    except Exception as e:
-        # If we can't create a session, return a fallback that allows access
-        # This ensures network issues don't block legitimate users
+    except Exception:
         return {
             "anon_id": anon_id,
             "started_at": datetime.now(timezone.utc).isoformat(),
@@ -358,67 +326,45 @@ def create_preview_session(anon_id: str) -> Optional[Dict]:
 
 
 def update_last_seen(anon_id: str) -> None:
-    """
-    Opportunistically update the last_seen timestamp for analytics.
-    Failures are silently ignored to avoid blocking the user.
-    """
     try:
         url = f"{SB_URL}/rest/v1/trial_sessions"
         params = {"anon_id": f"eq.{anon_id}"}
         payload = {"last_seen": datetime.now(timezone.utc).isoformat()}
         SESSION.patch(url, params=params, json=payload, timeout=5)
     except Exception:
-        pass  # Silent failure - this is non-critical
+        pass
 
 
 def calculate_remaining_time(started_at_str: str) -> int:
-    """
-    Calculate remaining preview time in seconds.
-    Returns 0 if time has expired.
-    """
     try:
-        # Parse the started_at timestamp
         started_at = pd.to_datetime(started_at_str, utc=True)
         now = pd.Timestamp.now(tz="UTC")
-        
         elapsed_seconds = (now - started_at).total_seconds()
         remaining = PREVIEW_DURATION_SECONDS - elapsed_seconds
-        
         return max(0, int(remaining))
     except Exception:
-        # If we can't parse, assume full time remaining to be generous
         return PREVIEW_DURATION_SECONDS
 
 
 def format_time_remaining(seconds: int) -> str:
-    """Format seconds as MM:SS or HH:MM:SS."""
     if seconds <= 0:
         return "00:00"
-    
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
-    
     if hours > 0:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
 
 
 def show_preview_banner(remaining_seconds: int) -> None:
-    """
-    Display the preview countdown banner at the top of the page.
-    Changes color based on remaining time.
-    """
     time_str = format_time_remaining(remaining_seconds)
-    
-    # Determine timer class based on remaining time
-    if remaining_seconds <= 60:  # Last minute
+    if remaining_seconds <= 60:
         timer_class = "critical"
-    elif remaining_seconds <= 300:  # Last 5 minutes
+    elif remaining_seconds <= 300:
         timer_class = "warning"
     else:
         timer_class = ""
-    
     banner_html = f"""
     <div class="preview-banner">
         <div class="timer {timer_class}">
@@ -433,9 +379,6 @@ def show_preview_banner(remaining_seconds: int) -> None:
 
 
 def show_expired_redirect() -> None:
-    """
-    Show the expired overlay and trigger a redirect to the paid dashboard.
-    """
     expired_html = f"""
     <div class="expired-overlay">
         <div class="expired-container">
@@ -451,7 +394,6 @@ def show_expired_redirect() -> None:
         </div>
     </div>
     <script>
-        // Auto-redirect after 3 seconds
         setTimeout(function() {{
             window.location.href = "{EXPIRED_REDIRECT_URL}";
         }}, 3000);
@@ -462,54 +404,27 @@ def show_expired_redirect() -> None:
 
 
 def check_preview_session() -> int:
-    """
-    Main preview session check. Called on every page load.
-    
-    Returns:
-        Remaining seconds if preview is valid, or calls st.stop() if expired.
-    """
-    # Get or create the anonymous ID for this visitor
     anon_id = get_or_create_anon_id()
-    
-    # Try to fetch existing session from Supabase
     session = get_preview_session(anon_id)
-    
     if session is None:
-        # New visitor - create their preview session
         session = create_preview_session(anon_id)
         if session is None:
-            # Fallback: allow access with full duration if DB is unreachable
             return PREVIEW_DURATION_SECONDS
-    
-    # Calculate remaining time based on their started_at
     started_at = session.get("started_at")
     if not started_at:
-        # If no started_at, treat as new session
         return PREVIEW_DURATION_SECONDS
-    
     remaining = calculate_remaining_time(started_at)
-    
     if remaining <= 0:
-        # Preview expired - show redirect
         show_expired_redirect()
-        # show_expired_redirect calls st.stop(), so we won't reach here
-    
-    # Update last_seen opportunistically (non-blocking)
     update_last_seen(anon_id)
-    
     return remaining
 
 
 # ============================= CHECK PREVIEW SESSION =============================
-# This runs on every page load to enforce the preview time limit
 remaining_preview_seconds = check_preview_session()
-
-# Display the countdown banner
 show_preview_banner(remaining_preview_seconds)
 
-# Set up auto-refresh to update the countdown (every 30 seconds)
 if st_autorefresh is not None:
-    # Refresh more frequently as time runs low
     refresh_interval = 10000 if remaining_preview_seconds <= 60 else 30000
     st_autorefresh(interval=refresh_interval, key="preview_refresh")
 
@@ -545,54 +460,25 @@ def numeric(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
 
 # =====================================================================
 # Streaming helpers
-#
-# The enterprise API streams new‑line delimited JSON (NDJSON) events via
-# Server‑Sent Events (SSE).  Each event is framed by a blank line and
-# contains one or more lines beginning with "data: ".  The following
-# helper decodes these frames and yields a parsed JSON object per event.
-#
 ENTERPRISE_URL: str = "https://api.trenchfeed.cc/stream/enterprise"
-# NOTE: The provided token is a read‑only demonstration token suitable
-# only for experimentation.  In production you should inject the token
-# via environment variables or Streamlit secrets.
 ENTERPRISE_TOKEN: str = "tk_live_henCCxnVFK4E1CaGlNRO7aH8PA11cxtf"
 
 def stream_enterprise(api_key: str = ENTERPRISE_TOKEN, *, max_events: int = 200) -> Iterable[Dict]:
-    """Yield parsed JSON objects from the enterprise streaming endpoint.
-
-    Parameters
-    ----------
-    api_key: str
-        The bearer token used for authentication.
-    max_events: int
-        Maximum number of events to yield before returning.  Limiting
-        prevents runaway loops during interactive sessions.
-
-    Yields
-    ------
-    dict
-        Parsed JSON payload for each SSE `data:` event.  If a line
-        cannot be decoded as JSON it is skipped.
-    """
     url = ENTERPRISE_URL
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Accept": "text/event-stream"
     }
-    # Open a streaming HTTP connection.  The timeout is set to 60 seconds
-    # per read to allow for network delays without freezing the UI.
     try:
         with requests.get(url, headers=headers, stream=True, timeout=60) as resp:
             resp.raise_for_status()
             buffer = ""
             event_count = 0
             for chunk in resp.iter_content(chunk_size=1024):
-                # Append decoded text to our buffer
                 try:
                     buffer += chunk.decode("utf-8", errors="ignore")
                 except Exception:
                     continue
-                # Process complete frames separated by two newlines
                 while "\n\n" in buffer:
                     frame, buffer = buffer.split("\n\n", 1)
                     for line in frame.split("\n"):
@@ -605,10 +491,8 @@ def stream_enterprise(api_key: str = ENTERPRISE_TOKEN, *, max_events: int = 200)
                                 if event_count >= max_events:
                                     return
                             except Exception:
-                                # Skip malformed JSON lines
                                 continue
     except Exception:
-        # On any failure (network or authentication), simply return
         return
 
 # ============================= UI helpers =============================
@@ -619,12 +503,6 @@ DISCLAIMER_TEXT: str = (
 )
 
 def display_disclaimer() -> None:
-    """Render a consistent disclaimer across all tabs.
-
-    Uses HTML to draw attention to the message without clashing with
-    existing dark styling.  The box uses a semi‑transparent background
-    so as not to distract from the content but to remain visible.
-    """
     st.markdown(
         f"<div style='background: rgba(255, 255, 255, 0.1); padding: 0.5rem 0.75rem; "
         f"border-left: 4px solid #FFB900; margin-bottom: 1rem;'>"
@@ -639,30 +517,21 @@ def rest_get(table: str, params: Dict[str, str], start: int = 0, stop: int = 999
     headers["Range-Unit"] = "items"
     headers["Range"] = f"{start}-{stop}"
     r = SESSION.get(url, params=params, headers=headers, timeout=timeout)
-    # Successful responses include 200 and 206 (partial).  Return parsed JSON.
     if r.status_code in (200, 206):
         try:
             return r.json()
         except Exception:
             return []
-    # Handle database timeouts gracefully: Supabase returns HTTP 500 with a cancellation code.
     if r.status_code == 500:
-        # Display a user-friendly message rather than a raw exception.  Note: st may not be available in
-        # all contexts, but this ensures that the UI remains clean for top_coins views.
         try:
             st.info(f"The '{table}' view timed out. Please reduce the date range or lower the row limit and try again.")
         except Exception:
             pass
         return []
-    # For other errors, suppress noisy 404 messages for optional tables.  Some
-    # views (e.g. 'listings' and 'risk_flags') may not exist in all schemas and
-    # return a 404 with a descriptive body.  We silently return an empty list
-    # for those cases so the UI remains clean.
     if r.status_code == 404:
         body_lower = (r.text or "").lower()
         if any(tok in body_lower for tok in ["public.listings", "public.risk_flags", "could not find the table"]):
             return []
-    # For other errors, log a warning with truncated details
     st.warning(f"Fetch error for {table}: HTTP {r.status_code}: {r.text[:240]}")
     return []
 
@@ -691,280 +560,448 @@ def fetch_view(view_name: str, limit: int) -> pd.DataFrame:
             df[col] = to_dt(df[col])
     return df
 
-# ============================= Linking & enrichment =============================
-TOKEN_COL_ALIASES: Tuple[str, ...] = (
-    "token_address", "base_token", "token", "token_addr", "mint", "mint_address"
-)
+# Chunk helper
+def _chunk(lst: List[str], n: int) -> List[List[str]]:
+    return [lst[i:i+n] for i in range(0, len(lst), n)]
 
-def normalize_token_column(df: pd.DataFrame) -> pd.DataFrame:
-    if "token_address" in df.columns:
-        return df
-    for alias in TOKEN_COL_ALIASES:
-        if alias in df.columns:
-            df = df.rename(columns={alias: "token_address"})
+# Token metadata join
+def fetch_tokens_for_addresses(addresses: Iterable[str]) -> pd.DataFrame:
+    addrs = sorted({a for a in addresses if isinstance(a, str) and a})
+    if not addrs:
+        return pd.DataFrame(columns=["token_address","name","symbol"])
+    CHUNK = 150
+    parts: List[pd.DataFrame] = []
+    for batch in _chunk(addrs, CHUNK):
+        where = {"token_address": "in.(" + ",".join(batch) + ")"}
+        parts.append(fetch_table("tokens", select="token_address,name,symbol", where=where, limit=len(batch)))
+    out = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["token_address","name","symbol"])
+    return out.drop_duplicates("token_address", keep="last")
+
+# Pair mapping from base_token
+def latest_pair_map_for_tokens(token_addrs: Iterable[str]) -> Dict[str, str]:
+    tlist = sorted({a for a in token_addrs if isinstance(a, str) and a})
+    if not tlist:
+        return {}
+    CHUNK = 120
+    maps: Dict[str, str] = {}
+    for batch in _chunk(tlist, CHUNK):
+        where = {"base_token": "in.(" + ",".join(batch) + ")"}
+        cols = "pair_address,base_token,snapshot_ts,pair_created_at"
+        pairs = fetch_table("pairs", select=cols, where=where, order="snapshot_ts.desc.nullslast", limit=len(batch)*6)
+        if pairs.empty:
+            continue
+        for c in ["snapshot_ts","pair_created_at"]:
+            pairs[c] = to_dt(pairs[c])
+        pairs = pairs.sort_values(["base_token","snapshot_ts","pair_created_at"], ascending=[True, False, False])
+        latest = pairs.drop_duplicates("base_token", keep="first")
+        for _, row in latest.iterrows():
+            b = row.get("base_token")
+            p = row.get("pair_address")
+            if isinstance(b, str) and isinstance(p, str) and b and p:
+                maps[b] = p
+    return maps
+
+# Backfill token from pairs when only pair is present
+def base_token_map_for_pairs(pair_addrs: Iterable[str]) -> Dict[str, str]:
+    plist = sorted({p for p in pair_addrs if isinstance(p, str) and p})
+    if not plist:
+        return {}
+    CHUNK = 150
+    maps: Dict[str, str] = {}
+    for batch in _chunk(plist, CHUNK):
+        where = {"pair_address": "in.(" + ",".join(batch) + ")"}
+        cols = "pair_address,base_token"
+        pairs = fetch_table("pairs", select=cols, where=where, limit=len(batch))
+        if pairs.empty:
+            continue
+        for _, row in pairs.iterrows():
+            pa = row.get("pair_address")
+            bt = row.get("base_token")
+            if isinstance(pa, str) and isinstance(bt, str) and pa and bt:
+                maps[pa] = bt
+    return maps
+
+# Normalize token column name from a variety of possibilities
+def normalize_token_col(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+    out = df.copy()
+    cols = {c.lower(): c for c in out.columns}
+    candidates = ["token_address","base_token","token","token_addr","mint","mint_address"]
+    found_src = None
+    for cand in candidates:
+        if cand in cols:
+            found_src = cols[cand]
             break
-    return df
+    if found_src and found_src != "token_address":
+        out = out.rename(columns={found_src: "token_address"})
+    if "token_address" not in out.columns:
+        out["token_address"] = ""
+    return out, "token_address"
 
-def backfill_token_from_pairs(df: pd.DataFrame, token_col: str = "token_address") -> pd.DataFrame:
-    if token_col in df.columns and df[token_col].notna().all():
+# Ensure pair links exist, by mapping from token_address when needed
+def ensure_pair_links(df: pd.DataFrame, token_col: str = "token_address") -> pd.DataFrame:
+    if df.empty:
         return df
-    if "pair_address" not in df.columns or df["pair_address"].isna().all():
+    out = df.copy()
+    if "pair_address" not in out.columns or out["pair_address"].fillna("").eq("").all():
+        tokens = [t for t in out.get(token_col, pd.Series(dtype=str)).astype(str).tolist() if t]
+        pmap = latest_pair_map_for_tokens(tokens)
+        out["pair_address"] = out.get("pair_address", pd.Series([""]*len(out)))
+        out.loc[:, "pair_address"] = out[token_col].map(lambda t: pmap.get(str(t), ""))
+    return out
+
+# If token is missing but pair exists, backfill token from pairs.base_token
+def ensure_token_from_pairs(df: pd.DataFrame, token_col: str = "token_address") -> pd.DataFrame:
+    if df.empty:
         return df
-    missing = df[token_col].isna() if token_col in df.columns else pd.Series(True, index=df.index)
-    pair_ids = df.loc[missing, "pair_address"].dropna().astype(str).unique().tolist()
-    if not pair_ids:
-        return df
+    out = df.copy()
+    need = (out.get(token_col, pd.Series(dtype=str)).fillna("") == "")
+    if "pair_address" in out.columns and need.any():
+        plist = out.loc[need, "pair_address"].dropna().astype(str).tolist()
+        if plist:
+            bmap = base_token_map_for_pairs(plist)
+            out.loc[need, token_col] = out.loc[need, "pair_address"].map(lambda p: bmap.get(str(p), ""))
+    return out
+
+# Join token names and symbols
+def attach_token_names(df: pd.DataFrame, token_col: str = "token_address") -> pd.DataFrame:
+    out = df.copy()
+    if out.empty or token_col not in out.columns:
+        for c in ["name","symbol"]:
+            if c not in out.columns:
+                out[c] = ""
+        return out
+    toks = out[token_col].dropna().astype(str).unique().tolist()
+    meta = fetch_tokens_for_addresses(toks)
+    if meta.empty:
+        for c in ["name","symbol"]:
+            if c not in out.columns:
+                out[c] = ""
+        return out
+    out = out.drop(columns=[c for c in ["name","symbol"] if c in out.columns])
+    out = out.merge(meta.rename(columns={"token_address": token_col}), on=token_col, how="left")
+    out[["name","symbol"]] = out[["name","symbol"]].fillna("")
+    return out
+
+# Link builder prefers pair link first, then token link
+def add_links(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "pair_address" in out.columns:
+        out["dexscreener"] = out["pair_address"].apply(
+            lambda p: f"https://dexscreener.com/solana/{p}" if isinstance(p, str) and p else ""
+        )
+    else:
+        out["dexscreener"] = ""
+    if "token_address" in out.columns:
+        out.loc[out["dexscreener"] == "", "dexscreener"] = out.loc[out["dexscreener"] == "", "token_address"].apply(
+            lambda t: f"https://dexscreener.com/solana/{t}" if isinstance(t, str) and t else ""
+        )
+        out["solscan"] = out["token_address"].apply(
+            lambda m: f"https://solscan.io/token/{m}" if isinstance(m, str) and m else ""
+        )
+        out["birdeye"] = out["token_address"].apply(
+            lambda m: f"https://birdeye.so/token/{m}?chain=solana" if isinstance(m, str) and m else ""
+        )
+    else:
+        out["solscan"] = ""
+        out["birdeye"] = ""
+    return out
+
+def link_config(cols: List[str]):
+    cfg_map = {}
+    colmod = getattr(st, "column_config", None)
+    if not colmod or not hasattr(colmod, "LinkColumn"):
+        return cfg_map
+    if "dexscreener" in cols:
+        cfg_map["dexscreener"] = colmod.LinkColumn("Dexscreener", display_text="Open")
+    if "solscan" in cols:
+        cfg_map["solscan"] = colmod.LinkColumn("Solscan", display_text="Scan")
+    if "birdeye" in cols:
+        cfg_map["birdeye"] = colmod.LinkColumn("Birdeye", display_text="Bird")
+    return cfg_map
+
+# ============================= Data Fetching Functions =============================
+def fetch_recent_pairs(max_pairs: int, recency_hours: int, max_age_minutes: int, *, use_snapshot_fallback: bool = True) -> pd.DataFrame:
+    since_iso = iso_hours_ago(recency_hours)
     pairs = fetch_table(
         "pairs",
-        select="pair_address,base_token",
-        where={"pair_address": f"in.({','.join(pair_ids)})"},
-        limit=len(pair_ids),
+        select=("pair_address,base_token,quote_token,price_usd,fdv_usd,market_cap_usd,"
+                "pair_created_at,snapshot_ts,base_token_name,base_token_symbol,quote_token_name,quote_token_symbol"),
+        where={"snapshot_ts": f"gte.{since_iso}"},
+        order="snapshot_ts.desc.nullslast",
+        limit=max_pairs,
     )
     if pairs.empty:
-        return df
-    lookup = dict(zip(pairs["pair_address"].astype(str), pairs["base_token"].astype(str)))
-    if token_col not in df.columns:
-        df[token_col] = None
-    filled = df.loc[missing, "pair_address"].map(lookup)
-    df.loc[missing, token_col] = filled
-    return df
+        return pairs
+    pairs = numeric(pairs, ["price_usd","fdv_usd","market_cap_usd"])
+    for tcol in ["pair_created_at","snapshot_ts"]:
+        if tcol in pairs.columns:
+            pairs[tcol] = to_dt(pairs[tcol])
+    eff = pairs["pair_created_at"].copy()
+    if use_snapshot_fallback:
+        eff = eff.where(eff.notna(), pairs["snapshot_ts"])
+    min_ts = now_utc() - pd.Timedelta(minutes=max_age_minutes)
+    pairs = pairs.loc[eff >= min_ts].copy()
+    pairs["effective_created_at"] = eff
+    pairs = pairs.rename(columns={"base_token": "token_address"})
+    return pairs
 
-def ensure_pair_links(df: pd.DataFrame, token_col: str = "token_address") -> pd.DataFrame:
-    df = normalize_token_column(df)
-    df = backfill_token_from_pairs(df, token_col)
-    return df
+def fetch_swaps_for_pairs(pair_addrs: List[str], since_iso: str, limit_per_batch: int = 10000) -> pd.DataFrame:
+    if not pair_addrs:
+        return pd.DataFrame(columns=["pair_address","ts","trader_wallet","side","amount_in","amount_out","amount_usd","price_usd"])
+    CHUNK = 120
+    parts: List[pd.DataFrame] = []
+    for batch in _chunk(pair_addrs, CHUNK):
+        where = {"pair_address": "in.(" + ",".join(batch) + ")", "ts": f"gte.{since_iso}"}
+        cols = "pair_address,ts,trader_wallet,side,amount_in,amount_out,amount_usd,price_usd"
+        sw = fetch_table("swaps", select=cols, where=where, order="ts.asc.nullslast", limit=limit_per_batch)
+        if not sw.empty:
+            sw["ts"] = to_dt(sw["ts"])
+            parts.append(sw)
+    if parts:
+        out = pd.concat(parts, ignore_index=True)
+        return numeric(out, ["amount_in","amount_out","amount_usd","price_usd"])
+    return pd.DataFrame(columns=["pair_address","ts","trader_wallet","side","amount_in","amount_out","amount_usd","price_usd"])
 
-def attach_token_names(df: pd.DataFrame, token_col: str = "token_address") -> pd.DataFrame:
-    if "name" in df.columns and "symbol" in df.columns:
-        return df
-    if token_col not in df.columns or df[token_col].isna().all():
-        return df
-    token_ids = df[token_col].dropna().astype(str).unique().tolist()
-    if not token_ids:
-        return df
-    tokens = fetch_table(
-        "tokens",
-        select="token_address,name,symbol",
-        where={"token_address": f"in.({','.join(token_ids)})"},
-        limit=len(token_ids),
-    )
-    if tokens.empty:
-        return df
-    lookup_name = dict(zip(tokens["token_address"].astype(str), tokens["name"]))
-    lookup_sym  = dict(zip(tokens["token_address"].astype(str), tokens["symbol"]))
-    if "name" not in df.columns:
-        df["name"] = df[token_col].map(lookup_name)
-    if "symbol" not in df.columns:
-        df["symbol"] = df[token_col].map(lookup_sym)
-    return df
+def fetch_pwm_for_pairs(pair_addrs: List[str], since_iso: str) -> pd.DataFrame:
+    if not pair_addrs:
+        return pd.DataFrame(columns=["pair_address","window_code","price_change_pct","buys","sells","volume_usd","snapshot_ts"])
+    CHUNK = 200
+    parts: List[pd.DataFrame] = []
+    for batch in _chunk(pair_addrs, CHUNK):
+        where = {"pair_address": "in.(" + ",".join(batch) + ")", "snapshot_ts": f"gte.{since_iso}", "window_code": "eq.m5"}
+        cols = "pair_address,window_code,price_change_pct,buys,sells,volume_usd,snapshot_ts"
+        pm = fetch_table("pair_window_metrics", select=cols, where=where, order="snapshot_ts.asc.nullslast", limit=5000)
+        if not pm.empty:
+            pm["snapshot_ts"] = to_dt(pm["snapshot_ts"])
+            parts.append(pm)
+    out = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["pair_address","window_code","price_change_pct","buys","sells","volume_usd","snapshot_ts"])
+    return numeric(out, ["price_change_pct","buys","sells","volume_usd"])
 
-def add_links(df: pd.DataFrame) -> pd.DataFrame:
-    def dex_link(row):
-        if pd.notna(row.get("pair_address")):
-            return f"https://dexscreener.com/solana/{row['pair_address']}"
-        if pd.notna(row.get("token_address")):
-            return f"https://dexscreener.com/solana/{row['token_address']}"
+def fetch_lp_events_for_pairs(pair_addrs: List[str], since_iso: str) -> pd.DataFrame:
+    if not pair_addrs:
+        return pd.DataFrame(columns=["pair_address","ts","action","value_usd"])
+    CHUNK = 200
+    parts: List[pd.DataFrame] = []
+    for batch in _chunk(pair_addrs, CHUNK):
+        where = {"pair_address": "in.(" + ",".join(batch) + ")", "ts": f"gte.{since_iso}"}
+        cols = "pair_address,ts,action,value_usd"
+        le = fetch_table("liquidity_events", select=cols, where=where, order="ts.asc.nullslast", limit=20000)
+        if not le.empty:
+            le["ts"] = to_dt(le["ts"])
+            parts.append(le)
+    out = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["pair_address","ts","action","value_usd"])
+    return numeric(out, ["value_usd"])
+
+# ============================= Early Leader Metrics =============================
+def _first_trade_ts(sw: pd.DataFrame) -> Optional[pd.Timestamp]:
+    if sw.empty:
         return None
-    def solscan_link(row):
-        if pd.notna(row.get("token_address")):
-            return f"https://solscan.io/token/{row['token_address']}"
-        return None
-    def birdeye_link(row):
-        if pd.notna(row.get("token_address")):
-            return f"https://birdeye.so/token/{row['token_address']}?chain=solana"
-        return None
+    ts = sw["ts"].dropna()
+    return ts.min() if not ts.empty else None
 
-    df["dexscreener"] = df.apply(dex_link, axis=1)
-    df["solscan"]     = df.apply(solscan_link, axis=1)
-    df["birdeye"]     = df.apply(birdeye_link, axis=1)
-    return df
+def _buy_mask(sw: pd.DataFrame) -> pd.Series:
+    if "side" in sw.columns and not sw["side"].isna().all():
+        return sw["side"].astype(str).str.lower().eq("buy")
+    return pd.Series([i % 2 == 0 for i in range(len(sw))], index=sw.index)
 
-def link_config(columns: List[str]) -> Dict:
-    cfg: Dict = {}
-    for col in ("dexscreener", "solscan", "birdeye"):
-        if col in columns:
-            cfg[col] = st.column_config.LinkColumn(col, display_text="🔗")
-    return cfg
+def _amount_for_concentration(sw_buys: pd.DataFrame) -> pd.Series:
+    if "amount_usd" in sw_buys.columns and not sw_buys["amount_usd"].isna().all():
+        return pd.to_numeric(sw_buys["amount_usd"], errors="coerce").fillna(0.0)
+    if "amount_in" in sw_buys.columns and not sw_buys["amount_in"].isna().all():
+        return pd.to_numeric(sw_buys["amount_in"], errors="coerce").fillna(0.0)
+    if "amount_out" in sw_buys.columns and not sw_buys["amount_out"].isna().all():
+        return pd.to_numeric(sw_buys["amount_out"], errors="coerce").fillna(0.0)
+    return pd.Series(1.0, index=sw_buys.index)
 
-# ============================= Analysis helpers =============================
-def fetch_swaps_for_pairs(pair_ids: List[str], since_iso: str) -> pd.DataFrame:
-    if not pair_ids:
-        return pd.DataFrame()
-    swaps = fetch_table(
-        "swaps",
-        select="pair_address,trader_address,swap_ts,side,usd_value",
-        where={"pair_address": f"in.({','.join(pair_ids)})", "swap_ts": f"gte.{since_iso}"},
-        order="swap_ts.desc",
-        limit=50000,
-    )
-    if not swaps.empty and "swap_ts" in swaps.columns:
-        swaps["swap_ts"] = to_dt(swaps["swap_ts"])
-    return swaps
-
-def fetch_pwm_for_pairs(pair_ids: List[str], since_iso: str) -> pd.DataFrame:
-    if not pair_ids:
-        return pd.DataFrame()
-    pwm = fetch_table(
-        "pair_window_metrics",
-        select="pair_address,window_start,buys,sells,unique_buyers,unique_sellers,volume_usd,trades",
-        where={"pair_address": f"in.({','.join(pair_ids)})", "window_start": f"gte.{since_iso}"},
-        order="window_start.desc",
-        limit=50000,
-    )
-    if not pwm.empty and "window_start" in pwm.columns:
-        pwm["window_start"] = to_dt(pwm["window_start"])
-    return pwm
-
-def fetch_lp_events_for_pairs(pair_ids: List[str], since_iso: str) -> pd.DataFrame:
-    if not pair_ids:
-        return pd.DataFrame()
-    lp = fetch_table(
-        "lp_events",
-        select="pair_address,event_type,provider,usd_value,ts",
-        where={"pair_address": f"in.({','.join(pair_ids)})", "ts": f"gte.{since_iso}"},
-        order="ts.desc",
-        limit=20000,
-    )
-    if not lp.empty and "ts" in lp.columns:
-        lp["ts"] = to_dt(lp["ts"])
-    return lp
-
-def compute_early_metrics(pairs: pd.DataFrame, swaps: pd.DataFrame, pwm: pd.DataFrame, lpev: pd.DataFrame) -> pd.DataFrame:
+def compute_early_metrics(
+    pairs: pd.DataFrame,
+    swaps: pd.DataFrame,
+    pwm: pd.DataFrame,
+    lpev: pd.DataFrame,
+    *,
+    burst_window_s: int = 120,
+    uniques_window_m: int = 10,
+    pwm_window_total_m: int = 15,
+) -> pd.DataFrame:
     if pairs.empty:
         return pairs.copy()
-    metrics = pairs.copy()
+    out = pairs.copy()
+    for c in ["time_to_first_trade_s","swaps_in_burst","swaps_per_min_burst","uniq_traders_10m","buy_ratio_15m","top5_concentration","first_trade_ts","lp_add_usd_15","lp_remove_usd_15"]:
+        out[c] = np.nan
 
-    # First trade timestamp
-    if not swaps.empty:
-        first = swaps.groupby("pair_address")["swap_ts"].min().reset_index(name="first_trade_ts")
-        metrics = metrics.merge(first, on="pair_address", how="left")
-    else:
-        metrics["first_trade_ts"] = pd.NaT
+    sw_by_pair: Dict[str, pd.DataFrame] = {}
+    if not swaps.empty and "pair_address" in swaps.columns:
+        for p, g in swaps.groupby("pair_address"):
+            sw_by_pair[str(p)] = g.copy()
 
-    # Time to first trade
-    metrics["time_to_first_trade_s"] = (
-        (metrics["first_trade_ts"] - metrics["effective_created_at"]).dt.total_seconds()
-    )
+    pwm_by_pair: Dict[str, pd.DataFrame] = {}
+    if not pwm.empty and "pair_address" in pwm.columns:
+        for p, g in pwm.groupby("pair_address"):
+            pwm_by_pair[str(p)] = g.copy()
 
-    # Burst metrics (first 5 minutes)
-    if not swaps.empty:
-        swaps = swaps.merge(metrics[["pair_address","effective_created_at"]], on="pair_address", how="left")
-        swaps["since_creation"] = (swaps["swap_ts"] - swaps["effective_created_at"]).dt.total_seconds()
-        burst = swaps[swaps["since_creation"].between(0, 300)]
-        burst_agg = burst.groupby("pair_address").agg(
-            burst_swaps=("swap_ts", "count"),
-            burst_traders=("trader_address", "nunique"),
-        ).reset_index()
-        burst_agg["swaps_per_min_burst"] = burst_agg["burst_swaps"] / 5
-        metrics = metrics.merge(burst_agg[["pair_address","swaps_per_min_burst","burst_traders"]], on="pair_address", how="left")
-    else:
-        metrics["swaps_per_min_burst"] = 0.0
-        metrics["burst_traders"] = 0
+    le_by_pair: Dict[str, pd.DataFrame] = {}
+    if not lpev.empty and "pair_address" in lpev.columns:
+        for p, g in lpev.groupby("pair_address"):
+            le_by_pair[str(p)] = g.copy()
 
-    # 10 minute unique traders
-    if not swaps.empty:
-        ten_min = swaps[swaps["since_creation"].between(0, 600)]
-        uniq10 = ten_min.groupby("pair_address")["trader_address"].nunique().reset_index(name="uniq_traders_10m")
-        metrics = metrics.merge(uniq10, on="pair_address", how="left")
-    else:
-        metrics["uniq_traders_10m"] = 0
+    for i, row in out.iterrows():
+        p = str(row.get("pair_address",""))
+        created = row.get("effective_created_at")
+        if not p or pd.isna(created):
+            continue
+        sw = sw_by_pair.get(p, pd.DataFrame())
+        if not sw.empty and "ts" in sw.columns:
+            sw = sw[sw["ts"].fillna(pd.Timestamp.max.tz_localize("UTC")) >= created]
 
-    # 15 minute buy ratio
-    if not pwm.empty:
-        pwm = pwm.merge(metrics[["pair_address","effective_created_at"]], on="pair_address", how="left")
-        pwm["since_creation"] = (pwm["window_start"] - pwm["effective_created_at"]).dt.total_seconds()
-        win15 = pwm[pwm["since_creation"].between(0, 900)]
-        agg15 = win15.groupby("pair_address").agg(total_buys=("buys","sum"), total_sells=("sells","sum")).reset_index()
-        agg15["buy_ratio_15m"] = agg15["total_buys"] / (agg15["total_buys"] + agg15["total_sells"]).replace(0, np.nan)
-        metrics = metrics.merge(agg15[["pair_address","buy_ratio_15m"]], on="pair_address", how="left")
-    else:
-        metrics["buy_ratio_15m"] = np.nan
+        first_ts = _first_trade_ts(sw)
+        if pd.notna(first_ts):
+            try:
+                out.at[i, "time_to_first_trade_s"] = float(max(0.0, (first_ts - created).total_seconds()))
+            except Exception:
+                out.at[i, "time_to_first_trade_s"] = np.inf
+        else:
+            out.at[i, "time_to_first_trade_s"] = np.inf
 
-    # Top 5 concentration
-    if not swaps.empty:
-        vol_by_trader = swaps.groupby(["pair_address","trader_address"])["usd_value"].sum().reset_index()
-        total_vol = vol_by_trader.groupby("pair_address")["usd_value"].sum().reset_index(name="total_vol")
-        vol_by_trader = vol_by_trader.merge(total_vol, on="pair_address", how="left")
-        vol_by_trader["share"] = vol_by_trader["usd_value"] / vol_by_trader["total_vol"].replace(0, np.nan)
-        top5 = vol_by_trader.sort_values(["pair_address","share"], ascending=[True, False]).groupby("pair_address").head(5)
-        conc = top5.groupby("pair_address")["share"].sum().reset_index(name="top5_concentration")
-        metrics = metrics.merge(conc, on="pair_address", how="left")
-    else:
-        metrics["top5_concentration"] = np.nan
+        if pd.notna(first_ts):
+            try:
+                cast_ts = pd.to_datetime(first_ts)
+                if cast_ts.tzinfo is not None:
+                    cast_ts = cast_ts.tz_convert(None)
+            except Exception:
+                cast_ts = pd.NaT
+        else:
+            cast_ts = pd.NaT
+        out.at[i, "first_trade_ts"] = cast_ts
 
-    # LP add/remove ratio
-    if not lpev.empty:
-        adds = lpev[lpev["event_type"].str.lower().str.contains("add", na=False)].groupby("pair_address")["usd_value"].sum().reset_index(name="lp_adds")
-        removes = lpev[lpev["event_type"].str.lower().str.contains("remove", na=False)].groupby("pair_address")["usd_value"].sum().reset_index(name="lp_removes")
-        metrics = metrics.merge(adds, on="pair_address", how="left")
-        metrics = metrics.merge(removes, on="pair_address", how="left")
-        metrics["lp_add_remove_ratio"] = metrics["lp_adds"].fillna(0) / metrics["lp_removes"].replace(0, np.nan).fillna(1)
-    else:
-        metrics["lp_adds"] = 0.0
-        metrics["lp_removes"] = 0.0
-        metrics["lp_add_remove_ratio"] = np.nan
+        if pd.notna(first_ts):
+            burst_end = first_ts + pd.Timedelta(seconds=burst_window_s)
+            burst = sw[(sw["ts"] >= first_ts) & (sw["ts"] <= burst_end)]
+            swaps_in_burst = float(len(burst))
+            swaps_per_min = swaps_in_burst / max(burst_window_s / 60.0, 1e-9)
+            out.at[i, "swaps_in_burst"] = swaps_in_burst
+            out.at[i, "swaps_per_min_burst"] = float(swaps_per_min)
 
-    return metrics
+            uniq_end = first_ts + pd.Timedelta(minutes=uniques_window_m)
+            w = sw[(sw["ts"] >= first_ts) & (sw["ts"] <= uniq_end)] if not sw.empty else sw
+            uniq_cnt = float(w["trader_wallet"].dropna().astype(str).nunique()) if ("trader_wallet" in w.columns and not w.empty) else 0.0
+            out.at[i, "uniq_traders_10m"] = uniq_cnt
+
+            sw_15 = sw[(sw["ts"] >= first_ts) & (sw["ts"] <= first_ts + pd.Timedelta(minutes=pwm_window_total_m))]
+            if not sw_15.empty and "side" in sw_15.columns:
+                is_buy = _buy_mask(sw_15)
+                buys = float(is_buy.sum())
+                sells = float((~is_buy).sum())
+                out.at[i, "buy_ratio_15m"] = buys / max(buys + sells, 1.0)
+            else:
+                pwm_df = pwm_by_pair.get(p, pd.DataFrame())
+                if not pwm_df.empty:
+                    pwm_early = pwm_df[(pwm_df["snapshot_ts"] >= created) & (pwm_df["snapshot_ts"] <= created + pd.Timedelta(minutes=pwm_window_total_m))]
+                    if not pwm_early.empty and {"buys","sells"}.issubset(pwm_early.columns):
+                        buys = float(pd.to_numeric(pwm_early["buys"], errors="coerce").fillna(0).sum())
+                        sells = float(pd.to_numeric(pwm_early["sells"], errors="coerce").fillna(0).sum())
+                        out.at[i, "buy_ratio_15m"] = buys / max(buys + sells, 1.0)
+
+            conc = np.nan
+            if not sw_15.empty and "trader_wallet" in sw_15.columns:
+                buys_df = sw_15[_buy_mask(sw_15)].copy()
+                if not buys_df.empty:
+                    amt = _amount_for_concentration(buys_df)
+                    g = buys_df.assign(_amt=amt).groupby("trader_wallet")["_amt"].sum().sort_values(ascending=False)
+                    total = float(g.sum())
+                    top5 = float(g.head(5).sum())
+                    conc = (top5 / total) if total > 0 else np.nan
+            out.at[i, "top5_concentration"] = conc
+
+        le_df = le_by_pair.get(p, pd.DataFrame())
+        if not le_df.empty and pd.notna(created):
+            span_end = created + pd.Timedelta(minutes=15)
+            win = le_df[(le_df["ts"] >= created) & (le_df["ts"] <= span_end)]
+            if not win.empty and {"action","value_usd"}.issubset(win.columns):
+                add_usd = pd.to_numeric(win.loc[win["action"].astype(str).str.lower().eq("add"), "value_usd"], errors="coerce").fillna(0).sum()
+                rem_usd = pd.to_numeric(win.loc[win["action"].astype(str).str.lower().eq("remove"), "value_usd"], errors="coerce").fillna(0).sum()
+                out.at[i, "lp_add_usd_15"] = float(add_usd)
+                out.at[i, "lp_remove_usd_15"] = float(rem_usd)
+
+    return out
 
 def score_and_classify(
     df: pd.DataFrame,
-    ttf_ceil_s: float = 600,
-    min_swaps_per_min: float = 2.0,
-    min_uniques_10m: int = 8,
+    *,
+    ttf_ceil_s: int = 600,
+    min_swaps_per_min: float = 20,
+    min_uniques_10m: int = 50,
     buy_ratio_center: float = 0.55,
-    buy_ratio_tol: float = 0.15,
-    max_concentration: float = 0.6,
-    leader_score_min: float = 50,
+    buy_ratio_tol: float = 0.25,
+    max_concentration: float = 0.70,
+    leader_score_min: float = 60.0,
 ) -> pd.DataFrame:
-    df = df.copy()
+    if df.empty: return df.copy()
+    out = df.copy()
+    vel   = out["swaps_per_min_burst"].astype(float).fillna(0.0)
+    uniq  = out["uniq_traders_10m"].astype(float).fillna(0.0)
+    br    = out["buy_ratio_15m"].astype(float)
+    conc  = out["top5_concentration"].astype(float)
+    lprem = out["lp_remove_usd_15"].astype(float).fillna(0.0)
 
-    # Time to first trade score (0-20)
-    ttf = df["time_to_first_trade_s"].fillna(ttf_ceil_s).clip(upper=ttf_ceil_s)
-    df["ttf_score"] = 20 * (1 - ttf / ttf_ceil_s)
+    s_vel  = (vel / max(min_swaps_per_min, 1e-9)).clip(0, 1)
+    s_uniq = (uniq / max(min_uniques_10m, 1e-9)).clip(0, 1)
+    s_br   = 1.0 - (br.sub(buy_ratio_center).abs() / max(buy_ratio_tol, 1e-9))
+    s_br   = s_br.clip(0, 1).fillna(0.5)
+    s_conc = 1.0 - ((conc - 0.50) / 0.50)
+    s_conc = s_conc.clip(0, 1).fillna(0.5)
+    lp_pen = (lprem > 0.0).astype(float)
 
-    # Swaps per minute score (0-25)
-    spm = df["swaps_per_min_burst"].fillna(0)
-    df["spm_score"] = (25 * (spm / 10)).clip(upper=25)
+    gate_tradeable = out["time_to_first_trade_s"].astype(float).fillna(np.inf) <= float(ttf_ceil_s)
+    gate_velocity  = vel  >= float(min_swaps_per_min)
+    gate_uniques   = uniq >= float(min_uniques_10m)
+    gate_br        = br.between(buy_ratio_center - buy_ratio_tol, buy_ratio_center + buy_ratio_tol, inclusive="both").fillna(True)
+    gate_conc      = conc.fillna(0.50) <= float(max_concentration)
+    gate_lp_ok     = ~(lprem > 0.0)
 
-    # Unique traders score (0-20)
-    uniq = df["uniq_traders_10m"].fillna(0)
-    df["uniq_score"] = (20 * (uniq / 30)).clip(upper=20)
+    score_01 = 0.35*s_vel + 0.35*s_uniq + 0.10*s_br + 0.20*s_conc
+    score_01 = score_01 * (1.0 - 0.9 * lp_pen)
+    out["early_score"] = (score_01.clip(0, 1) * 100.0).round(1)
 
-    # Buy ratio score (0-20)
-    br = df["buy_ratio_15m"].fillna(0.5)
-    deviation = (br - buy_ratio_center).abs()
-    df["br_score"] = (20 * (1 - deviation / buy_ratio_tol)).clip(lower=0, upper=20)
-
-    # Concentration score (0-15)
-    conc = df["top5_concentration"].fillna(1)
-    df["conc_score"] = (15 * (1 - conc / max_concentration)).clip(lower=0, upper=15)
-
-    # Total score
-    df["early_score"] = df["ttf_score"] + df["spm_score"] + df["uniq_score"] + df["br_score"] + df["conc_score"]
-
-    # Classification
-    def classify(row):
-        score = row.get("early_score", 0) or 0
-        spm_val = row.get("swaps_per_min_burst", 0) or 0
-        uniq_val = row.get("uniq_traders_10m", 0) or 0
-        br_val = row.get("buy_ratio_15m", 0.5) or 0.5
-        conc_val = row.get("top5_concentration", 1) or 1
-
-        reasons = []
-        if score >= leader_score_min and spm_val >= min_swaps_per_min and uniq_val >= min_uniques_10m:
-            if conc_val <= max_concentration and abs(br_val - buy_ratio_center) <= buy_ratio_tol:
-                return "Early Leader", "High score, healthy metrics"
-            reasons.append("conc or buy_ratio out of range")
-        if score >= leader_score_min * 0.6:
-            if spm_val >= min_swaps_per_min * 0.5:
-                return "Hype / Risky", "Moderate score but risky metrics"
-        return "Loser / Skip", "; ".join(reasons) if reasons else "Low overall score"
-
-    classified = df.apply(classify, axis=1, result_type="expand")
-    df["classification"] = classified[0]
-    df["reason"] = classified[1]
-
-    return df
+    labels, reasons = [], []
+    early_scores = out["early_score"].astype(float).fillna(0.0)
+    for trd, vel_ok, unq_ok, br_ok, conc_ok, lp_ok, sc in zip(
+        gate_tradeable, gate_velocity, gate_uniques, gate_br, gate_conc, gate_lp_ok, early_scores
+    ):
+        if (vel_ok and unq_ok and br_ok and conc_ok and sc >= leader_score_min):
+            labels.append("Early Leader")
+            reasons.append("Velocity+Uniques+Balance+Dispersion")
+            continue
+        if sc >= 35.0 or (vel_ok and (unq_ok or br_ok)):
+            labels.append("Hype / Risky")
+            missing = []
+            if not conc_ok:
+                missing.append("Concentration")
+            if not unq_ok:
+                missing.append("Uniques")
+            if not br_ok:
+                missing.append("BuyRatio")
+            reasons.append(" & ".join(missing) if missing else "Borderline")
+            continue
+        if not trd:
+            labels.append("Loser (no early trades)")
+            reasons.append("No trade <=10m")
+            continue
+        if not lp_ok:
+            labels.append("Loser (early LP remove)")
+            reasons.append("LP removed <=15m")
+            continue
+        labels.append("Loser")
+        why = []
+        if not vel_ok:
+            why.append("Low velocity")
+        if not unq_ok:
+            why.append("Low uniques")
+        if not br_ok:
+            why.append("Unbalanced flow")
+        reasons.append("Weak" if not why else " & ".join(why))
+    out["classification"] = labels
+    out["reason"] = reasons
+    return out
 
 # ============================= Sidebar =============================
 with st.sidebar:
@@ -978,244 +1015,94 @@ with st.sidebar:
     st.markdown(f"[Subscribe for Full Access →]({STRIPE_PURCHASE_URL})")
     st.markdown("---")
     
-    st.subheader("Filters")
-    recency_hours = st.slider("Recency (hours)", 1, 72, 6, help="How far back to look for new pairs.")
-    max_pairs = st.slider("Max pairs", 100, 5000, 1000, help="Maximum pairs to fetch.")
-    max_age_minutes = st.slider("Max age (min)", 5, 1440, 120, help="Only show pairs created within this window.")
-    radar_window_m = st.slider("Radar window (min)", 5, 120, 30, help="Lookback window for Launch Radar.")
-    radar_max = st.slider("Radar max rows", 10, 500, 100, help="Max rows in Launch Radar.")
-    detail_limit = st.slider("Detail limit", 10, 500, 100, help="Max rows for detail views.")
-
-    st.subheader("Scoring Thresholds")
-    min_swaps_per_min = st.number_input("Min swaps/min (burst)", 0.5, 20.0, 2.0, 0.5)
-    min_uniques_10m = st.number_input("Min unique traders (10m)", 1, 100, 8, 1)
-    buy_center = st.number_input("Buy ratio center", 0.3, 0.7, 0.55, 0.05)
-    buy_tol = st.number_input("Buy ratio tolerance", 0.05, 0.3, 0.15, 0.05)
-    max_conc = st.number_input("Max top5 concentration", 0.3, 1.0, 0.6, 0.05)
-    leader_score_min = st.number_input("Leader score min", 20, 100, 50, 5)
+    # Encapsulate all controls in an expander for a cleaner look
+    with st.expander("🛠️ Controls & Settings", expanded=True):
+        # Manual refresh button
+        if st.button("🔄 Manual Refresh"):
+            st.rerun()
+        
+        # Settings for scanning tokens and windows
+        max_pairs = st.slider("Max pairs to scan", 200, 10000, 2000, 100)
+        recency_hours = st.slider("Only tokens newer than (hours)", 1, 72, 2, 1)
+        max_age_minutes = st.slider("Max token age for candidates (minutes)", 1, 240, 30, 1)
+        use_snapshot_fallback = st.toggle("Use snapshot_ts when pair_created_at is NULL", value=True)
+        
+        st.markdown("---")
+        st.markdown("**Early Leader thresholds**")
+        min_swaps_per_min = st.slider("Min swaps/min in 2m burst", 1, 80, 20, 1)
+        min_uniques_10m = st.slider("Min unique traders in first 10m", 5, 200, 50, 5)
+        buy_center = st.slider("Buy ratio center", 0.40, 0.70, 0.55, 0.01)
+        buy_tol = st.slider("Buy ratio tolerance (±)", 0.05, 0.35, 0.25, 0.01)
+        max_conc = st.slider("Max Top-5 concentration", 0.50, 0.95, 0.70, 0.01)
+        leader_score_min = st.slider("Min Early Leader score", 0, 100, 60, 1)
+        
+        st.markdown("---")
+        radar_window_m = st.slider("Launch Radar: lookback minutes", 30, 240, 120, 15)
+        radar_max = st.slider("Launch Radar: max rows", 20, 400, 120, 20)
+        detail_limit = st.slider("Token Detail: rows per table", 50, 5000, 500, 50)
 
 # ============================= Tabs =============================
-tab_live, tab_leaders, tab_all, tab_radar, tab_detail, tab_top = st.tabs([
-    "Live Feed", "Early Leaders", "All Candidates", "Launch Radar", "Token Detail", "Top Coins"
+tab_all, tab_leaders, tab_detail, tab_top, tab_radar = st.tabs([
+    "📋 All Candidates",
+    "🏆 Early Leaders",
+    "🔎 Token Detail",
+    "🔴 LIVE",
+    "🚀 Launch Radar"
 ])
-
-# ============================= Live Feed =============================
-with tab_live:
-    st.subheader("Live Feed")
-    display_disclaimer()
-    
-    # Initialize session state for streaming
-    if "stream_data" not in st.session_state:
-        st.session_state.stream_data = []
-    if "stream_initialized" not in st.session_state:
-        st.session_state.stream_initialized = False
-    if "stream_paused" not in st.session_state:
-        st.session_state.stream_paused = False
-    
-    # Stream control buttons
-    btn_col1, btn_col2, status_col = st.columns([1, 1, 2])
-    
-    with btn_col1:
-        refresh_feed = st.button("🔄 Refresh", key="refresh_feed", use_container_width=True)
-    
-    with btn_col2:
-        # Toggle pause/resume state
-        is_paused = st.session_state.stream_paused
-        pause_label = "▶️ Resume" if is_paused else "⏸️ Pause"
-        if st.button(pause_label, key="pause_resume", use_container_width=True):
-            st.session_state.stream_paused = not st.session_state.stream_paused
-            st.rerun()
-    
-    with status_col:
-        # Display current stream status with visual indicator
-        if st.session_state.stream_paused:
-            st.markdown(
-                '<div class="stream-status paused">'
-                '<span class="pulse"></span>'
-                'PAUSED'
-                '</div>',
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                '<div class="stream-status live">'
-                '<span class="pulse"></span>'
-                'STREAMING'
-                '</div>',
-                unsafe_allow_html=True
-            )
-    
-    # Handle refresh - reset data and re-initialize
-    if refresh_feed:
-        st.session_state.stream_data = []
-        st.session_state.stream_initialized = False
-        st.session_state.stream_paused = False
-        st.rerun()
-    
-    # Placeholder for the live table
-    live_placeholder = st.empty()
-    
-    # Define a mapping from raw column names to degen‑friendly jargon.  These
-    # names resonate with crypto traders while remaining self‑explanatory.
-    _live_rename_map = {
-        "payload.token.name": "Token Name",
-        "payload.token.symbol": "Ticker",
-        "payload.pair.base_token": "Base Token",
-        "payload.pair.dex": "DEX",
-        "payload.pair.price_usd": "Price USD",
-        "payload.current_swap.side": "Side",
-        "payload.current_swap.price_usd": "Swap Price USD",
-        "payload.current_swap.usd_value": "Swap Value USD",
-        "payload.current_swap.sol_amount": "SOL Amount",
-        "payload.current_swap.token_amount": "Token Amount",
-        "payload.current_swap.trader_wallet": "Trader Wallet",
-        "payload.timestamp": "Event Timestamp",
-    }
-    
-    def render_stream_table():
-        """Render the current stream data as a table."""
-        if not st.session_state.stream_data:
-            live_placeholder.info("No data yet. Waiting for stream events...")
-            return
-        
-        try:
-            df_stream = pd.json_normalize(st.session_state.stream_data)
-        except Exception:
-            df_stream = pd.DataFrame(st.session_state.stream_data)
-        
-        # Drop the recent_swaps column if present, as it contains opaque objects
-        if "payload.recent_swaps" in df_stream.columns:
-            df_stream = df_stream.drop(columns=["payload.recent_swaps"])
-        
-        # Rename columns using the friendly mapping where available
-        rename_map = {k: v for k, v in _live_rename_map.items() if k in df_stream.columns}
-        df_stream = df_stream.rename(columns=rename_map)
-        
-        # Determine primary columns (after rename, if rename occurred)
-        primary_raw = ["payload.token.name", "payload.token.symbol", "payload.pair.base_token"]
-        primary_cols = [rename_map.get(col, _live_rename_map.get(col, col)) for col in primary_raw if (rename_map.get(col, _live_rename_map.get(col, col)) in df_stream.columns)]
-        
-        # Build an ordered list of columns: primary first, then the rest
-        other_cols = [c for c in df_stream.columns if c not in primary_cols]
-        ordered_cols = primary_cols + other_cols
-        
-        # Take the last 50 events and reverse order so newest events appear first
-        df_show = df_stream[ordered_cols].tail(50).iloc[::-1].copy()
-        
-        # Assign descending row numbers (highest at top) as the index
-        n_rows = len(df_show)
-        df_show.index = range(n_rows, 0, -1)
-        
-        # Display the table
-        live_placeholder.dataframe(
-            df_show,
-            use_container_width=True,
-            height=620,
-        )
-    
-    def run_live_stream():
-        """Internal helper to consume streaming data and update the table."""
-        # Collect a bounded number of events to avoid infinite loops
-        for event in stream_enterprise(max_events=200):
-            # Check if stream is paused - if so, stop consuming new events
-            # Note: Due to Streamlit's execution model, this check happens
-            # between events. The pause takes effect after the current event.
-            if st.session_state.stream_paused:
-                break
-            
-            # Append the raw event to our session state
-            st.session_state.stream_data.append(event)
-            
-            # Render the updated table
-            render_stream_table()
-    
-    # If paused, just render the existing data
-    if st.session_state.stream_paused:
-        render_stream_table()
-    # Start the stream when the component first renders or upon refresh
-    elif not st.session_state.get("stream_initialized"):
-        st.session_state.stream_initialized = True
-        run_live_stream()
-    else:
-        # Already initialized and not paused - continue streaming
-        run_live_stream()
 
 # ============================= Early Leaders =============================
 with tab_leaders:
     st.subheader("Early Leaders")
     display_disclaimer()
-    since_iso = iso_hours_ago(recency_hours)
-    pairs = fetch_table(
-        "pairs",
-        select="pair_address,token_address:base_token,base_token_name,base_token_symbol,pair_created_at,snapshot_ts,price_usd,fdv_usd,market_cap_usd",
-        where={"snapshot_ts": f"gte.{since_iso}"},
-        order="snapshot_ts.desc.nullslast",
-        limit=max_pairs,
-    )
+    pairs = fetch_recent_pairs(max_pairs, recency_hours, max_age_minutes, use_snapshot_fallback=use_snapshot_fallback)
     if pairs.empty:
-        st.info("No recent pairs found.")
+        st.info("No recent pairs in the selected window.")
     else:
-        pairs = numeric(pairs, ["price_usd","fdv_usd","market_cap_usd"])
-        for tcol in ["pair_created_at","snapshot_ts"]:
-            pairs[tcol] = to_dt(pairs[tcol])
-        eff = pairs["pair_created_at"].where(pairs["pair_created_at"].notna(), pairs["snapshot_ts"])
-        min_ts = now_utc() - pd.Timedelta(minutes=max_age_minutes)
-        pairs = pairs.loc[eff >= min_ts].copy()
-        pairs["effective_created_at"] = eff
+        earliest_eff = pairs["effective_created_at"].min()
+        since_iso = iso(earliest_eff - pd.Timedelta(minutes=1)) if pd.notna(earliest_eff) else iso_hours_ago(recency_hours)
 
-        if pairs.empty:
-            st.info("No pairs within the age filter.")
-        else:
-            earliest_eff = pairs["effective_created_at"].min()
-            since_iso = iso(earliest_eff - pd.Timedelta(minutes=1)) if pd.notna(earliest_eff) else iso_hours_ago(recency_hours)
+        pair_ids = pairs["pair_address"].dropna().astype(str).unique().tolist()
+        swaps = fetch_swaps_for_pairs(pair_ids, since_iso)
+        pwm   = fetch_pwm_for_pairs(pair_ids, since_iso)
+        lpev  = fetch_lp_events_for_pairs(pair_ids, since_iso)
 
-            pair_ids = pairs["pair_address"].dropna().astype(str).unique().tolist()
-            swaps = fetch_swaps_for_pairs(pair_ids, since_iso)
-            pwm   = fetch_pwm_for_pairs(pair_ids, since_iso)
-            lpev  = fetch_lp_events_for_pairs(pair_ids, since_iso)
+        metrics = compute_early_metrics(pairs, swaps, pwm, lpev)
+        ranked  = score_and_classify(metrics,
+                                     ttf_ceil_s=600,
+                                     min_swaps_per_min=float(min_swaps_per_min),
+                                     min_uniques_10m=int(min_uniques_10m),
+                                     buy_ratio_center=float(buy_center),
+                                     buy_ratio_tol=float(buy_tol),
+                                     max_concentration=float(max_conc),
+                                     leader_score_min=float(leader_score_min))
 
-            metrics = compute_early_metrics(pairs, swaps, pwm, lpev)
-            ranked  = score_and_classify(metrics,
-                                         ttf_ceil_s=600,
-                                         min_swaps_per_min=float(min_swaps_per_min),
-                                         min_uniques_10m=int(min_uniques_10m),
-                                         buy_ratio_center=float(buy_center),
-                                         buy_ratio_tol=float(buy_tol),
-                                         max_concentration=float(max_conc),
-                                         leader_score_min=float(leader_score_min))
+        ranked = ensure_pair_links(ranked, token_col="token_address")
+        ranked = attach_token_names(ranked, token_col="token_address")
+        ranked = add_links(ranked)
+        if not ranked.empty and "early_score" in ranked.columns:
+            ranked = ranked.sort_values(["early_score"], ascending=[False]).reset_index(drop=True)
 
-            ranked = ensure_pair_links(ranked, token_col="token_address")
-            ranked = attach_token_names(ranked, token_col="token_address")
-            ranked = add_links(ranked)
-            # Sort the Early Leaders view by descending early_score to surface the highest
-            # scoring tokens at the top.  If early_score is missing the sort has no effect.
-            if not ranked.empty and "early_score" in ranked.columns:
-                ranked = ranked.sort_values(["early_score"], ascending=[False]).reset_index(drop=True)
-
-            cols = [
-                "early_score","classification","reason",
-                "swaps_per_min_burst","uniq_traders_10m","buy_ratio_15m","top5_concentration",
-                # LP columns are removed from the display in Early Leaders; metrics still include them
-                "token_address","name","symbol",
-                "dexscreener","solscan","birdeye",
-                "pair_address","effective_created_at","first_trade_ts","time_to_first_trade_s",
-            ]
-            shown = [c for c in cols if c in ranked.columns]
-            # Display summary metrics for Early Leaders.  These indicators give a quick glance at
-            # how many tokens fall into each classification and how strong they are on average.
-            if not ranked.empty:
-                leader_count = int((ranked.get("classification") == "Early Leader").sum()) if "classification" in ranked.columns else 0
-                hype_count   = int((ranked.get("classification") == "Hype / Risky").sum()) if "classification" in ranked.columns else 0
-                loser_count  = int(ranked.get("classification").astype(str).str.contains("Loser").sum()) if "classification" in ranked.columns else 0
-                avg_score    = float(ranked.get("early_score").mean()) if "early_score" in ranked.columns else float('nan')
-                max_score    = float(ranked.get("early_score").max()) if "early_score" in ranked.columns else float('nan')
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("Leaders", f"{leader_count}")
-                c2.metric("Hype", f"{hype_count}")
-                c3.metric("Losers", f"{loser_count}")
-                c4.metric("Avg Score", f"{avg_score:.1f}" if not pd.isna(avg_score) else "N/A")
-                c5.metric("Top Score", f"{max_score:.1f}" if not pd.isna(max_score) else "N/A")
-            st.dataframe(ranked[shown].reset_index(drop=True), use_container_width=True, height=520, column_config=link_config(shown))
+        cols = [
+            "early_score","classification","reason",
+            "swaps_per_min_burst","uniq_traders_10m","buy_ratio_15m","top5_concentration",
+            "token_address","name","symbol",
+            "dexscreener","solscan","birdeye",
+            "pair_address","effective_created_at","first_trade_ts","time_to_first_trade_s",
+        ]
+        shown = [c for c in cols if c in ranked.columns]
+        if not ranked.empty:
+            leader_count = int((ranked.get("classification") == "Early Leader").sum()) if "classification" in ranked.columns else 0
+            hype_count   = int((ranked.get("classification") == "Hype / Risky").sum()) if "classification" in ranked.columns else 0
+            loser_count  = int(ranked.get("classification").astype(str).str.contains("Loser").sum()) if "classification" in ranked.columns else 0
+            avg_score    = float(ranked.get("early_score").mean()) if "early_score" in ranked.columns else float('nan')
+            max_score    = float(ranked.get("early_score").max()) if "early_score" in ranked.columns else float('nan')
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Leaders", f"{leader_count}")
+            c2.metric("Hype", f"{hype_count}")
+            c3.metric("Losers", f"{loser_count}")
+            c4.metric("Avg Score", f"{avg_score:.1f}" if not pd.isna(avg_score) else "N/A")
+            c5.metric("Top Score", f"{max_score:.1f}" if not pd.isna(max_score) else "N/A")
+        st.dataframe(ranked[shown].reset_index(drop=True), use_container_width=True, height=520, column_config=link_config(shown))
 
 # ============================= All Candidates =============================
 with tab_all:
@@ -1253,87 +1140,6 @@ with tab_all:
         ]
         shown = [c for c in cols if c in pairs.columns]
         st.dataframe(pairs[shown].reset_index(drop=True), use_container_width=True, height=620, column_config=link_config(shown))
-
-# ============================= Launch Radar =============================
-with tab_radar:
-    st.subheader("Launch Radar")
-    display_disclaimer()
-    lookback_iso = iso(now_utc() - pd.Timedelta(minutes=radar_window_m))
-    recent_pairs = fetch_table(
-        "pairs",
-        select="pair_address,token_address:base_token,base_token_name,base_token_symbol,pair_created_at,snapshot_ts,price_usd,fdv_usd,market_cap_usd",
-        where={"pair_created_at": f"gte.{lookback_iso}"},
-        order="pair_created_at.desc.nullslast",
-        limit=2000
-    )
-    if recent_pairs.empty or recent_pairs["pair_created_at"].isna().all():
-        extra = fetch_table(
-            "pairs",
-            select="pair_address,token_address:base_token,base_token_name,base_token_symbol,pair_created_at,snapshot_ts,price_usd,fdv_usd,market_cap_usd",
-            where={"snapshot_ts": f"gte.{lookback_iso}"},
-            order="snapshot_ts.desc.nullslast",
-            limit=2000
-        )
-        if not extra.empty:
-            recent_pairs = extra
-
-    if recent_pairs.empty:
-        st.info("No very recent launches.")
-    else:
-        recent_pairs["pair_created_at"] = to_dt(recent_pairs["pair_created_at"])
-        recent_pairs["snapshot_ts"]     = to_dt(recent_pairs["snapshot_ts"])
-        eff = recent_pairs["pair_created_at"].where(recent_pairs["pair_created_at"].notna(), recent_pairs["snapshot_ts"])
-        recent_pairs["effective_created_at"] = eff
-
-        pair_ids = recent_pairs["pair_address"].dropna().astype(str).unique().tolist()
-        swaps = fetch_swaps_for_pairs(pair_ids, lookback_iso)
-        pwm   = fetch_pwm_for_pairs(pair_ids, lookback_iso)
-        lpev  = fetch_lp_events_for_pairs(pair_ids, lookback_iso)
-
-        metrics = compute_early_metrics(recent_pairs, swaps, pwm, lpev)
-        ranked  = score_and_classify(metrics,
-                                     ttf_ceil_s=600,
-                                     min_swaps_per_min=float(min_swaps_per_min),
-                                     min_uniques_10m=int(min_uniques_10m),
-                                     buy_ratio_center=float(buy_center),
-                                     buy_ratio_tol=float(buy_tol),
-                                     max_concentration=float(max_conc),
-                                     leader_score_min=float(leader_score_min))
-
-        ranked = ensure_pair_links(ranked, token_col="token_address")
-        ranked = attach_token_names(ranked, token_col="token_address")
-        ranked = add_links(ranked)
-
-        if "market_cap_usd" in ranked.columns:
-            ranked = numeric(ranked, ["market_cap_usd"])
-            ranked = ranked[ranked["market_cap_usd"].fillna(0) >= 30000]
-
-        cols = [
-            "effective_created_at",
-            "token_address","name","symbol",
-            "dexscreener","solscan","birdeye",
-            "early_score","classification","reason",
-            "swaps_per_min_burst","uniq_traders_10m","buy_ratio_15m","top5_concentration",
-            # LP columns are intentionally excluded from Launch Radar display
-            "pair_address",
-        ]
-        shown = [c for c in cols if c in ranked.columns]
-        # Sort Launch Radar strictly by highest early_score first.  This ensures that top-scoring
-        # tokens (actual winners) appear first instead of being grouped by classification or
-        # alphabetical order.  We drop secondary sorting by classification/effective_created_at.
-        ranked = ranked.sort_values(["early_score"], ascending=[False]).head(radar_max).reset_index(drop=True)
-        # Display summary metrics for Launch Radar.  These metrics provide a quick overview
-        # of the newly launched pairs and how many qualify as leaders or hype tokens.
-        total_pairs    = len(ranked)
-        lr_leaders     = int((ranked.get("classification") == "Early Leader").sum()) if "classification" in ranked.columns else 0
-        lr_hype        = int((ranked.get("classification") == "Hype / Risky").sum()) if "classification" in ranked.columns else 0
-        lr_avg_score   = float(ranked.get("early_score").mean()) if "early_score" in ranked.columns else float('nan')
-        col_a, col_b, col_c, col_d = st.columns(4)
-        col_a.metric("New Pairs", f"{total_pairs}")
-        col_b.metric("Leaders", f"{lr_leaders}")
-        col_c.metric("Hype", f"{lr_hype}")
-        col_d.metric("Avg Score", f"{lr_avg_score:.1f}" if not pd.isna(lr_avg_score) else "N/A")
-        st.dataframe(ranked[shown], use_container_width=True, height=640, column_config=link_config(shown))
 
 # ============================= Token Detail =============================
 with tab_detail:
@@ -1398,38 +1204,239 @@ with tab_detail:
                      column_config=link_config(list(pairs_q.columns) if not pairs_q.empty else []))
 
         pair_ids: List[str] = list(pairs_q["pair_address"].dropna().unique()) if not pairs_q.empty else []
-        if pair_ids:
-            swaps_q = fetch_table(
-                "swaps",
-                select="pair_address,trader_address,swap_ts,side,usd_value,sol_amount,token_amount",
-                where={"pair_address": f"in.({','.join(pair_ids)})"},
-                order="swap_ts.desc",
-                limit=detail_limit,
-            )
-            if not swaps_q.empty: swaps_q["swap_ts"] = to_dt(swaps_q.get("swap_ts"))
-            st.write("Recent Swaps")
-            st.dataframe(swaps_q.reset_index(drop=True), use_container_width=True, height=250)
+        pair_ids_str = ",".join(pair_ids[:500])
 
-# ============================= Top Coins =============================
+        for table, title in [
+            ("pair_window_metrics","Pair Window Metrics"),
+            ("pair_price_snapshots","Pair Price Snapshots"),
+            ("features","Features"),
+            ("liquidity_events","Liquidity Events"),
+            ("listings","Listings"),
+            ("swaps","Swaps"),
+        ]:
+            where = {"pair_address": f"in.({pair_ids_str})"} if pair_ids_str else None
+            order = "snapshot_ts.desc" if table in ("pair_window_metrics","pair_price_snapshots") else "ts.desc"
+            df = fetch_table(table, select="*", where=where, order=order, limit=detail_limit)
+            tscol = "snapshot_ts" if (not df.empty and "snapshot_ts" in df.columns) else ("ts" if (not df.empty and "ts" in df.columns) else None)
+            if not df.empty and tscol: df[tscol] = to_dt(df[tscol])
+            st.write(title)
+            st.dataframe(df.reset_index(drop=True), use_container_width=True, height=220)
+
+        chains = fetch_table("chains", select="*", where={"chain_id": f"eq.{tok.iloc[0]['chain_id']}"} if not tok.empty else None, limit=1)
+        st.write("Chains")
+        st.dataframe(chains.reset_index(drop=True), use_container_width=True, height=100)
+
+        wallet_ids: Set[str] = set()
+        if not creators.empty and "wallet_id" in creators.columns:
+            wallet_ids.update([w for w in creators["wallet_id"].dropna().astype(str).tolist()])
+        if pair_ids:
+            sw = fetch_table("swaps", select="trader_wallet", where={"pair_address": f"in.({','.join(pair_ids[:400])})"}, limit=5000)
+            if not sw.empty and "trader_wallet" in sw.columns:
+                wallet_ids.update(sw["trader_wallet"].dropna().astype(str).tolist())
+        wl = list(sorted(wallet_ids))[:200]
+        wlabels = fetch_table("wallet_labels", select="*", where={"wallet_id": "in.(" + ",".join(wl) + ")"} if wl else None, limit=len(wl) or 1)
+        st.write("Wallet Labels")
+        st.dataframe(wlabels.reset_index(drop=True), use_container_width=True, height=150)
+        w = fetch_table("wallets", select="*", where={"wallet_id": "in.(" + ",".join(wl) + ")"} if wl else None, limit=len(wl) or 1)
+        if not w.empty: w["first_seen"] = to_dt(w.get("first_seen"))
+        st.write("Wallets")
+        st.dataframe(w.reset_index(drop=True), use_container_width=True, height=200)
+
+# ============================= Top Coins (LIVE) =============================
 with tab_top:
-    st.subheader("Top Coins (Database Views)")
+    st.subheader("Live Market Data Stream")
     display_disclaimer()
-    available_views = [
-        "top_coins_24h",
-        "top_coins_1h",
-        "hot_pairs",
-        "whale_activity",
-        "smart_money_flow",
-    ]
-    view_choice = st.selectbox("Select view", available_views)
-    view_limit = st.slider("Rows", 10, 500, 100, key="top_view_limit")
-    if st.button("Load View", key="load_top_view"):
-        df_view = fetch_view(view_choice, view_limit)
-        if df_view.empty:
-            st.info(f"No data from {view_choice}.")
+    st.caption("Real‑time streaming of market events from TrenchFeed Enterprise API. \n"
+               "Click the button below to re‑establish the feed at any time.")
+    st.markdown(
+        "<div style='margin: 0.5rem 0;'>"
+        "For continuous, high‑fidelity data streams, head over to "
+        "<a href='https://trenchfeed.cc' target='_blank' style='font-weight:bold; color:#FFB900;'>"
+        "trenchfeed.cc</a> and grab a subscription.</div>",
+        unsafe_allow_html=True,
+    )
+    
+    # Initialize stream control state
+    if "stream_paused" not in st.session_state:
+        st.session_state.stream_paused = False
+    if "stream_data" not in st.session_state:
+        st.session_state.stream_data = []
+    if "stream_initialized" not in st.session_state:
+        st.session_state.stream_initialized = False
+    
+    # Create button row with Refresh and Pause/Resume side by side
+    btn_col1, btn_col2, status_col = st.columns([1, 1, 2])
+    
+    with btn_col1:
+        refresh_feed = st.button("🔄 Refresh Feed", key="refresh_feed", use_container_width=True)
+    
+    with btn_col2:
+        is_paused = st.session_state.stream_paused
+        pause_label = "▶️ Resume" if is_paused else "⏸️ Pause"
+        if st.button(pause_label, key="pause_resume", use_container_width=True):
+            st.session_state.stream_paused = not st.session_state.stream_paused
+            st.rerun()
+    
+    with status_col:
+        if st.session_state.stream_paused:
+            st.markdown(
+                '<div class="stream-status paused">'
+                '<span class="pulse"></span>'
+                'PAUSED'
+                '</div>',
+                unsafe_allow_html=True
+            )
         else:
-            df_view = ensure_pair_links(df_view)
-            df_view = attach_token_names(df_view)
-            df_view = add_links(df_view)
-            shown = list(df_view.columns)
-            st.dataframe(df_view.reset_index(drop=True), use_container_width=True, height=620, column_config=link_config(shown))
+            st.markdown(
+                '<div class="stream-status live">'
+                '<span class="pulse"></span>'
+                'STREAMING'
+                '</div>',
+                unsafe_allow_html=True
+            )
+    
+    if refresh_feed:
+        st.session_state.stream_data = []
+        st.session_state.stream_initialized = False
+        st.session_state.stream_paused = False
+        st.rerun()
+    
+    live_placeholder = st.empty()
+    
+    _live_rename_map = {
+        "payload.token.name": "Token Name",
+        "payload.token.symbol": "Ticker",
+        "payload.pair.base_token": "Base Token",
+        "payload.pair.dex": "DEX",
+        "payload.pair.price_usd": "Price USD",
+        "payload.current_swap.side": "Side",
+        "payload.current_swap.price_usd": "Swap Price USD",
+        "payload.current_swap.usd_value": "Swap Value USD",
+        "payload.current_swap.sol_amount": "SOL Amount",
+        "payload.current_swap.token_amount": "Token Amount",
+        "payload.current_swap.trader_wallet": "Trader Wallet",
+        "payload.timestamp": "Event Timestamp",
+    }
+    
+    def render_stream_table():
+        if not st.session_state.stream_data:
+            live_placeholder.info("No data yet. Waiting for stream events...")
+            return
+        
+        try:
+            df_stream = pd.json_normalize(st.session_state.stream_data)
+        except Exception:
+            df_stream = pd.DataFrame(st.session_state.stream_data)
+        
+        if "payload.recent_swaps" in df_stream.columns:
+            df_stream = df_stream.drop(columns=["payload.recent_swaps"])
+        
+        rename_map = {k: v for k, v in _live_rename_map.items() if k in df_stream.columns}
+        df_stream = df_stream.rename(columns=rename_map)
+        
+        primary_raw = ["payload.token.name", "payload.token.symbol", "payload.pair.base_token"]
+        primary_cols = [rename_map.get(col, _live_rename_map.get(col, col)) for col in primary_raw if (rename_map.get(col, _live_rename_map.get(col, col)) in df_stream.columns)]
+        
+        other_cols = [c for c in df_stream.columns if c not in primary_cols]
+        ordered_cols = primary_cols + other_cols
+        
+        df_show = df_stream[ordered_cols].tail(50).iloc[::-1].copy()
+        
+        n_rows = len(df_show)
+        df_show.index = range(n_rows, 0, -1)
+        
+        live_placeholder.dataframe(
+            df_show,
+            use_container_width=True,
+            height=620,
+        )
+    
+    def run_live_stream():
+        for event in stream_enterprise(max_events=200):
+            if st.session_state.stream_paused:
+                break
+            st.session_state.stream_data.append(event)
+            render_stream_table()
+    
+    if st.session_state.stream_paused:
+        render_stream_table()
+    elif not st.session_state.get("stream_initialized"):
+        st.session_state.stream_initialized = True
+        run_live_stream()
+    else:
+        run_live_stream()
+
+# ============================= Launch Radar =============================
+with tab_radar:
+    st.subheader("Launch Radar")
+    display_disclaimer()
+    lookback_iso = iso(now_utc() - pd.Timedelta(minutes=radar_window_m))
+    recent_pairs = fetch_table(
+        "pairs",
+        select="pair_address,token_address:base_token,base_token_name,base_token_symbol,pair_created_at,snapshot_ts,price_usd,fdv_usd,market_cap_usd",
+        where={"pair_created_at": f"gte.{lookback_iso}"},
+        order="pair_created_at.desc.nullslast",
+        limit=2000
+    )
+    if recent_pairs.empty or recent_pairs["pair_created_at"].isna().all():
+        extra = fetch_table(
+            "pairs",
+            select="pair_address,token_address:base_token,base_token_name,base_token_symbol,pair_created_at,snapshot_ts,price_usd,fdv_usd,market_cap_usd",
+            where={"snapshot_ts": f"gte.{lookback_iso}"},
+            order="snapshot_ts.desc.nullslast",
+            limit=2000
+        )
+        if not extra.empty:
+            recent_pairs = extra
+
+    if recent_pairs.empty:
+        st.info("No very recent launches.")
+    else:
+        recent_pairs["pair_created_at"] = to_dt(recent_pairs["pair_created_at"])
+        recent_pairs["snapshot_ts"]     = to_dt(recent_pairs["snapshot_ts"])
+        eff = recent_pairs["pair_created_at"].where(recent_pairs["pair_created_at"].notna(), recent_pairs["snapshot_ts"])
+        recent_pairs["effective_created_at"] = eff
+
+        pair_ids = recent_pairs["pair_address"].dropna().astype(str).unique().tolist()
+        swaps = fetch_swaps_for_pairs(pair_ids, lookback_iso)
+        pwm   = fetch_pwm_for_pairs(pair_ids, lookback_iso)
+        lpev  = fetch_lp_events_for_pairs(pair_ids, lookback_iso)
+
+        metrics = compute_early_metrics(recent_pairs, swaps, pwm, lpev)
+        ranked  = score_and_classify(metrics,
+                                     ttf_ceil_s=600,
+                                     min_swaps_per_min=float(min_swaps_per_min),
+                                     min_uniques_10m=int(min_uniques_10m),
+                                     buy_ratio_center=float(buy_center),
+                                     buy_ratio_tol=float(buy_tol),
+                                     max_concentration=float(max_conc),
+                                     leader_score_min=float(leader_score_min))
+
+        ranked = ensure_pair_links(ranked, token_col="token_address")
+        ranked = attach_token_names(ranked, token_col="token_address")
+        ranked = add_links(ranked)
+
+        if "market_cap_usd" in ranked.columns:
+            ranked = numeric(ranked, ["market_cap_usd"])
+            ranked = ranked[ranked["market_cap_usd"].fillna(0) >= 30000]
+
+        cols = [
+            "effective_created_at",
+            "token_address","name","symbol",
+            "dexscreener","solscan","birdeye",
+            "early_score","classification","reason",
+            "swaps_per_min_burst","uniq_traders_10m","buy_ratio_15m","top5_concentration",
+            "pair_address",
+        ]
+        shown = [c for c in cols if c in ranked.columns]
+        ranked = ranked.sort_values(["early_score"], ascending=[False]).head(radar_max).reset_index(drop=True)
+        total_pairs    = len(ranked)
+        lr_leaders     = int((ranked.get("classification") == "Early Leader").sum()) if "classification" in ranked.columns else 0
+        lr_hype        = int((ranked.get("classification") == "Hype / Risky").sum()) if "classification" in ranked.columns else 0
+        lr_avg_score   = float(ranked.get("early_score").mean()) if "early_score" in ranked.columns else float('nan')
+        col_a, col_b, col_c, col_d = st.columns(4)
+        col_a.metric("New Pairs", f"{total_pairs}")
+        col_b.metric("Leaders", f"{lr_leaders}")
+        col_c.metric("Hype", f"{lr_hype}")
+        col_d.metric("Avg Score", f"{lr_avg_score:.1f}" if not pd.isna(lr_avg_score) else "N/A")
+        st.dataframe(ranked[shown], use_container_width=True, height=640, column_config=link_config(shown))
