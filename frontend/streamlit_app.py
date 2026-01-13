@@ -1013,6 +1013,9 @@ with st.sidebar:
     time_remaining_str = format_time_remaining(remaining_preview_seconds)
     st.markdown(f"**⏱️ Preview:** {time_remaining_str} remaining")
     st.markdown(f"[Subscribe for Full Access →]({STRIPE_PURCHASE_URL})")
+    # Add a login link for returning users beneath the subscription CTA.
+    # This points to the main paid dashboard login page.
+    st.markdown("[Login →](https://sold-1.onrender.com)")
     st.markdown("---")
     
     # Encapsulate all controls in an expander for a cleaner look
@@ -1039,6 +1042,16 @@ with st.sidebar:
         st.markdown("---")
         radar_window_m = st.slider("Launch Radar: lookback minutes", 30, 240, 120, 15)
         radar_max = st.slider("Launch Radar: max rows", 20, 400, 120, 20)
+        # New slider controlling how many pairs are scanned for the Launch Radar.
+        # Scanning fewer pairs significantly reduces load time while still
+        # surfacing the most interesting launches.
+        radar_candidates = st.slider(
+            "Launch Radar: pairs to scan",
+            min_value=300,
+            max_value=500,
+            value=400,
+            step=50,
+        )
         detail_limit = st.slider("Token Detail: rows per table", 50, 5000, 500, 50)
 
 # ============================= Tabs =============================
@@ -1370,47 +1383,59 @@ with tab_top:
 with tab_radar:
     st.subheader("Launch Radar")
     display_disclaimer()
+    # Progress bar to indicate Launch Radar status
+    progress_bar = st.progress(0.0)
     lookback_iso = iso(now_utc() - pd.Timedelta(minutes=radar_window_m))
     recent_pairs = fetch_table(
         "pairs",
         select="pair_address,token_address:base_token,base_token_name,base_token_symbol,pair_created_at,snapshot_ts,price_usd,fdv_usd,market_cap_usd",
         where={"pair_created_at": f"gte.{lookback_iso}"},
         order="pair_created_at.desc.nullslast",
-        limit=2000
+        limit=int(radar_candidates)
     )
+    progress_bar.progress(0.1)
     if recent_pairs.empty or recent_pairs["pair_created_at"].isna().all():
         extra = fetch_table(
             "pairs",
             select="pair_address,token_address:base_token,base_token_name,base_token_symbol,pair_created_at,snapshot_ts,price_usd,fdv_usd,market_cap_usd",
             where={"snapshot_ts": f"gte.{lookback_iso}"},
             order="snapshot_ts.desc.nullslast",
-            limit=2000
+            limit=int(radar_candidates)
         )
+        # advance progress after fallback query
+        progress_bar.progress(0.2)
         if not extra.empty:
             recent_pairs = extra
 
     if recent_pairs.empty:
         st.info("No very recent launches.")
+        progress_bar.progress(1.0)
     else:
         recent_pairs["pair_created_at"] = to_dt(recent_pairs["pair_created_at"])
         recent_pairs["snapshot_ts"]     = to_dt(recent_pairs["snapshot_ts"])
         eff = recent_pairs["pair_created_at"].where(recent_pairs["pair_created_at"].notna(), recent_pairs["snapshot_ts"])
         recent_pairs["effective_created_at"] = eff
+        progress_bar.progress(0.3)
 
         pair_ids = recent_pairs["pair_address"].dropna().astype(str).unique().tolist()
         swaps = fetch_swaps_for_pairs(pair_ids, lookback_iso)
+        progress_bar.progress(0.5)
         pwm   = fetch_pwm_for_pairs(pair_ids, lookback_iso)
+        progress_bar.progress(0.6)
         lpev  = fetch_lp_events_for_pairs(pair_ids, lookback_iso)
+        progress_bar.progress(0.8)
 
         metrics = compute_early_metrics(recent_pairs, swaps, pwm, lpev)
-        ranked  = score_and_classify(metrics,
-                                     ttf_ceil_s=600,
-                                     min_swaps_per_min=float(min_swaps_per_min),
-                                     min_uniques_10m=int(min_uniques_10m),
-                                     buy_ratio_center=float(buy_center),
-                                     buy_ratio_tol=float(buy_tol),
-                                     max_concentration=float(max_conc),
-                                     leader_score_min=float(leader_score_min))
+        ranked  = score_and_classify(
+            metrics,
+            ttf_ceil_s=600,
+            min_swaps_per_min=float(min_swaps_per_min),
+            min_uniques_10m=int(min_uniques_10m),
+            buy_ratio_center=float(buy_center),
+            buy_ratio_tol=float(buy_tol),
+            max_concentration=float(max_conc),
+            leader_score_min=float(leader_score_min),
+        )
 
         ranked = ensure_pair_links(ranked, token_col="token_address")
         ranked = attach_token_names(ranked, token_col="token_address")
@@ -1430,6 +1455,7 @@ with tab_radar:
         ]
         shown = [c for c in cols if c in ranked.columns]
         ranked = ranked.sort_values(["early_score"], ascending=[False]).head(radar_max).reset_index(drop=True)
+        progress_bar.progress(1.0)
         total_pairs    = len(ranked)
         lr_leaders     = int((ranked.get("classification") == "Early Leader").sum()) if "classification" in ranked.columns else 0
         lr_hype        = int((ranked.get("classification") == "Hype / Risky").sum()) if "classification" in ranked.columns else 0
