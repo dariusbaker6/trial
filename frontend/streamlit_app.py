@@ -1052,13 +1052,12 @@ with st.sidebar:
             value=400,
             step=50,
         )
-        detail_limit = st.slider("Token Detail: rows per table", 50, 5000, 500, 50)
+        # Removed Token Detail slider as Token Detail tab has been removed.
 
 # ============================= Tabs =============================
-tab_all, tab_leaders, tab_detail, tab_top, tab_radar = st.tabs([
+tab_all, tab_leaders, tab_top, tab_radar = st.tabs([
     "📋 All Candidates",
     "🏆 Early Leaders",
-    "🔎 Token Detail",
     "🔴 LIVE",
     "🚀 Launch Radar"
 ])
@@ -1154,106 +1153,7 @@ with tab_all:
         shown = [c for c in cols if c in pairs.columns]
         st.dataframe(pairs[shown].reset_index(drop=True), use_container_width=True, height=620, column_config=link_config(shown))
 
-# ============================= Token Detail =============================
-with tab_detail:
-    st.subheader("Token Detail")
-    display_disclaimer()
-    q_token = st.text_input("Token address", help="Paste token address")
-    if q_token:
-        if st.button("Fetch latest Data"):
-            import subprocess
-            helius_path = "/opt/sol/etl/hel.py"
-            try:
-                subprocess.run(["python3", helius_path, q_token], check=False)
-                st.success("Refreshed from Helius. You can now view updated tables.")
-            except Exception as e:
-                st.warning(f"Helius refresh failed: {e}")
-        tok = fetch_table("tokens", select="token_address,chain_id,name,symbol,updated_at", where={"token_address": f"eq.{q_token}"}, limit=1)
-        if not tok.empty: tok["updated_at"] = to_dt(tok.get("updated_at"))
-        st.write("Tokens")
-        st.dataframe(tok.reset_index(drop=True), use_container_width=True, height=120)
-
-        tstate = fetch_table("token_state", select="*", where={"token_address": f"eq.{q_token}"}, limit=1)
-        if not tstate.empty and "last_window" in tstate.columns:
-            tstate["last_window"] = to_dt(tstate["last_window"])
-        st.write("Token State")
-        st.dataframe(tstate.reset_index(drop=True), use_container_width=True, height=150)
-
-        creators = fetch_table("creators", select="*", where={"token_address": f"eq.{q_token}"}, limit=detail_limit)
-        if not creators.empty and "created_at" in creators.columns:
-            creators["created_at"] = to_dt(creators["created_at"])
-        st.write("Creators")
-        st.dataframe(creators.reset_index(drop=True), use_container_width=True, height=150)
-
-        holders = fetch_table("holder_snapshots", select="*", where={"token_address": f"eq.{q_token}"}, order="snapshot_ts.desc", limit=detail_limit)
-        if not holders.empty: holders["snapshot_ts"] = to_dt(holders.get("snapshot_ts"))
-        st.write("Holder Snapshots")
-        st.dataframe(holders.reset_index(drop=True), use_container_width=True, height=220)
-
-        rflags = fetch_table("risk_flags", select="*", where={"token_address": f"eq.{q_token}"}, order="ts.desc", limit=detail_limit)
-        if not rflags.empty: rflags["ts"] = to_dt(rflags.get("ts"))
-        st.write("Risk Flags")
-        st.dataframe(rflags.reset_index(drop=True), use_container_width=True, height=180)
-
-        pairs_q = fetch_table(
-            "pairs",
-            select=("pair_address,chain_id,dex_id,base_token,quote_token,price_usd,fdv_usd,market_cap_usd,"
-                    "pair_created_at,snapshot_ts,base_token_name,base_token_symbol,quote_token_name,quote_token_symbol"),
-            where={"or": f"(base_token.eq.{q_token},quote_token.eq.{q_token})"},
-            order="snapshot_ts.desc.nullslast",
-            limit=detail_limit,
-        )
-        if not pairs_q.empty:
-            pairs_q = numeric(pairs_q, ["price_usd","fdv_usd","market_cap_usd"])
-            for tcol in ["pair_created_at","snapshot_ts"]:
-                pairs_q[tcol] = to_dt(pairs_q[tcol])
-            pairs_q = pairs_q.rename(columns={"base_token":"token_address"})
-            pairs_q["effective_created_at"] = pairs_q["pair_created_at"].where(pairs_q["pair_created_at"].notna(), pairs_q["snapshot_ts"])
-            pairs_q = ensure_pair_links(pairs_q, token_col="token_address")
-            pairs_q = attach_token_names(pairs_q, token_col="token_address")
-            pairs_q = add_links(pairs_q)
-        st.write("Pairs")
-        st.dataframe(pairs_q.reset_index(drop=True), use_container_width=True, height=250,
-                     column_config=link_config(list(pairs_q.columns) if not pairs_q.empty else []))
-
-        pair_ids: List[str] = list(pairs_q["pair_address"].dropna().unique()) if not pairs_q.empty else []
-        pair_ids_str = ",".join(pair_ids[:500])
-
-        for table, title in [
-            ("pair_window_metrics","Pair Window Metrics"),
-            ("pair_price_snapshots","Pair Price Snapshots"),
-            ("features","Features"),
-            ("liquidity_events","Liquidity Events"),
-            ("listings","Listings"),
-            ("swaps","Swaps"),
-        ]:
-            where = {"pair_address": f"in.({pair_ids_str})"} if pair_ids_str else None
-            order = "snapshot_ts.desc" if table in ("pair_window_metrics","pair_price_snapshots") else "ts.desc"
-            df = fetch_table(table, select="*", where=where, order=order, limit=detail_limit)
-            tscol = "snapshot_ts" if (not df.empty and "snapshot_ts" in df.columns) else ("ts" if (not df.empty and "ts" in df.columns) else None)
-            if not df.empty and tscol: df[tscol] = to_dt(df[tscol])
-            st.write(title)
-            st.dataframe(df.reset_index(drop=True), use_container_width=True, height=220)
-
-        chains = fetch_table("chains", select="*", where={"chain_id": f"eq.{tok.iloc[0]['chain_id']}"} if not tok.empty else None, limit=1)
-        st.write("Chains")
-        st.dataframe(chains.reset_index(drop=True), use_container_width=True, height=100)
-
-        wallet_ids: Set[str] = set()
-        if not creators.empty and "wallet_id" in creators.columns:
-            wallet_ids.update([w for w in creators["wallet_id"].dropna().astype(str).tolist()])
-        if pair_ids:
-            sw = fetch_table("swaps", select="trader_wallet", where={"pair_address": f"in.({','.join(pair_ids[:400])})"}, limit=5000)
-            if not sw.empty and "trader_wallet" in sw.columns:
-                wallet_ids.update(sw["trader_wallet"].dropna().astype(str).tolist())
-        wl = list(sorted(wallet_ids))[:200]
-        wlabels = fetch_table("wallet_labels", select="*", where={"wallet_id": "in.(" + ",".join(wl) + ")"} if wl else None, limit=len(wl) or 1)
-        st.write("Wallet Labels")
-        st.dataframe(wlabels.reset_index(drop=True), use_container_width=True, height=150)
-        w = fetch_table("wallets", select="*", where={"wallet_id": "in.(" + ",".join(wl) + ")"} if wl else None, limit=len(wl) or 1)
-        if not w.empty: w["first_seen"] = to_dt(w.get("first_seen"))
-        st.write("Wallets")
-        st.dataframe(w.reset_index(drop=True), use_container_width=True, height=200)
+# The Token Detail tab has been removed.
 
 # ============================= Top Coins (LIVE) =============================
 with tab_top:
